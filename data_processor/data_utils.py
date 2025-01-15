@@ -27,17 +27,17 @@ def validate_input_data(data: np.ndarray, indicator_name: str) -> None:
         IndicatorValidationError: If the input data is invalid
     """
     if data is None or len(data) == 0:
-        raise IndicatorValidationError("The data is empty")
+        raise IndicatorValidationError(f"Input data for calculating {indicator_name} is empty")
 
     try:
         # Convert data to numeric if it's not already
         numeric_data = data.astype(float)
         
         if np.any(np.isnan(numeric_data)):
-            raise IndicatorValidationError("The data contains NaN values")
+            raise IndicatorValidationError(f"Input data for calculating {indicator_name} contains missing values (NaN)")
             
     except (ValueError, TypeError):
-        raise IndicatorValidationError("The data must be numeric")
+        raise IndicatorValidationError(f"Input data for calculating {indicator_name} must be numeric")
 
 def validate_rsi(rsi_values: np.ndarray) -> Tuple[bool, str]:
     """
@@ -196,6 +196,15 @@ def calculate_technical_indicators(df: pd.DataFrame, indicators_config: dict) ->
         DataFrame with calculated technical indicators
     """
     try:
+        # Validate DataFrame structure
+        required_columns = ['close']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise ValueError(f"Required columns missing: {missing_columns}")
+            
+        if df.empty:
+            raise ValueError("Cannot calculate technical indicators on empty data")
+            
         logger.debug(f"Starting technical indicators calculation with config: {indicators_config}")
         result_df = df.copy()
         
@@ -253,20 +262,26 @@ def normalize_features(df: pd.DataFrame, feature_columns: List[str]) -> pd.DataF
         pd.DataFrame: Data frame with normalized feature values
     """
     try:
+        # Validate input
+        if df.empty:
+            raise ValueError("Cannot normalize empty data")
+            
+        missing_columns = [col for col in feature_columns if col not in df.columns]
+        if missing_columns:
+            raise ValueError(f"Required columns for normalization missing: {missing_columns}")
+            
         logger.debug(f"Starting normalization for columns: {feature_columns}")
         df = df.copy()
         scaler = MinMaxScaler()
         
         df[feature_columns] = scaler.fit_transform(df[feature_columns])
-        
-        # Clip values to ensure they are exactly between 0 and 1
         df[feature_columns] = df[feature_columns].clip(0, 1)
         
         logger.debug(f"Normalization completed successfully. Data range: {df[feature_columns].min().to_dict()} to {df[feature_columns].max().to_dict()}")
         return df
     
     except Exception as e:
-        logger.error(f"Error normalizing feature values: {str(e)}")
+        logger.error(f"Error normalizing features: {str(e)}")
         raise
 
 def handle_missing_data(df: pd.DataFrame, threshold: float = 0.1) -> pd.DataFrame:
@@ -285,7 +300,7 @@ def handle_missing_data(df: pd.DataFrame, threshold: float = 0.1) -> pd.DataFram
     """
     try:
         if df.empty:
-            raise ValueError("Input DataFrame is empty")
+            raise ValueError("Cannot handle missing data on empty DataFrame")
             
         logger.debug(f"Starting missing data handling. Input shape: {df.shape}")
         
