@@ -222,6 +222,11 @@ def calculate_technical_indicators(df: pd.DataFrame, indicators_config: dict) ->
                     for period in params['periods']:
                         validate_input_data(df['close'].values, f'SMA_{period}')
                         result_df[f'SMA_{period}'] = talib.SMA(df['close'].values, timeperiod=period)
+                        
+                elif indicator == 'EMA':
+                    for period in params['periods']:
+                        validate_input_data(df['close'].values, f'EMA_{period}')
+                        result_df[f'EMA_{period}'] = talib.EMA(df['close'].values, timeperiod=period)
                 
                 logger.debug(f"Successfully calculated {indicator}")
                 
@@ -274,8 +279,14 @@ def handle_missing_data(df: pd.DataFrame, threshold: float = 0.1) -> pd.DataFram
         
     Returns:
         pd.DataFrame: Data frame with handled missing data
+        
+    Raises:
+        ValueError: If input DataFrame is empty
     """
     try:
+        if df.empty:
+            raise ValueError("Input DataFrame is empty")
+            
         logger.debug(f"Starting missing data handling. Input shape: {df.shape}")
         
         # Calculate missing value proportions

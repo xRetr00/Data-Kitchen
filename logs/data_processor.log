@@ -1504,3 +1504,58 @@
 2025-01-15 20:12:03,654 - data_processor.data_storage - INFO - Data loaded successfully: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-12\test_process_pair0\BTC_USDT_1h.parquet
 2025-01-15 20:12:03,682 - data_processor.data_storage - INFO - Data storage initialized in: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-12\test_handle_missing_data0
 2025-01-15 20:12:03,682 - data_processor.processor - INFO - Data Processor initialized
+2025-01-15 20:17:07,582 - data_processor.data_storage - INFO - Data storage initialized in: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-13\test_save_and_load_data0
+2025-01-15 20:17:07,681 - data_processor.data_storage - INFO - Data saved successfully: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-13\test_save_and_load_data0\BTC_USDT_1h.parquet
+2025-01-15 20:17:07,804 - data_processor.data_storage - INFO - Data loaded successfully: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-13\test_save_and_load_data0\BTC_USDT_1h.parquet
+2025-01-15 20:17:07,821 - data_processor.data_storage - INFO - Data storage initialized in: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-13\test_load_nonexistent_data0
+2025-01-15 20:17:07,821 - data_processor.data_storage - INFO - Data storage initialized in: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-13\test_save_data_creates_directo0
+2025-01-15 20:17:07,832 - data_processor.data_storage - INFO - Data saved successfully: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-13\test_save_data_creates_directo0\BTC_USDT_1h.parquet
+2025-01-15 20:17:07,832 - data_processor.data_storage - INFO - Data storage initialized in: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-13\test_file_path_generation0
+2025-01-15 20:17:07,871 - data_processor.data_utils - WARNING - Dropping columns with high missing value proportion: Index(['C'], dtype='object')
+2025-01-15 20:17:07,898 - data_processor.data_utils - ERROR - Error calculating RSI: The data contains NaN values
+2025-01-15 20:17:07,898 - data_processor.data_utils - ERROR - Error calculating technical indicators: The data contains NaN values
+2025-01-15 20:17:07,904 - data_processor.data_utils - ERROR - Error normalizing feature values: "None of [Index(['close'], dtype='object')] are in the [columns]"
+2025-01-15 20:17:08,654 - data_processor.data_utils - ERROR - Error calculating RSI: input array type is not double
+2025-01-15 20:17:08,654 - data_processor.data_utils - ERROR - Error calculating technical indicators: input array type is not double
+2025-01-15 20:17:08,704 - data_processor.data_utils - ERROR - Error calculating RSI: input array type is not double
+2025-01-15 20:17:08,721 - data_processor.data_utils - ERROR - Error calculating technical indicators: input array type is not double
+2025-01-15 20:17:08,722 - data_processor.data_utils - ERROR - Error calculating RSI: 'close'
+2025-01-15 20:17:08,722 - data_processor.data_utils - ERROR - Error calculating technical indicators: 'close'
+2025-01-15 20:17:08,748 - data_processor.data_storage - INFO - Data storage initialized in: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-13\test_process_chunk0
+2025-01-15 20:17:08,748 - data_processor.processor - INFO - Data Processor initialized
+2025-01-15 20:17:09,020 - data_processor.data_storage - INFO - Data storage initialized in: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-13\test_process_pair0
+2025-01-15 20:17:09,020 - data_processor.processor - INFO - Data Processor initialized
+2025-01-15 20:17:09,270 - data_processor.data_storage - INFO - Data saved successfully: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-13\test_process_pair0\BTC_USDT_1h.parquet
+2025-01-15 20:17:09,270 - data_processor.processor - INFO - Saved 217 remaining data points for BTC/USDT and 1h
+2025-01-15 20:17:09,354 - data_processor.data_storage - INFO - Data loaded successfully: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-13\test_process_pair0\BTC_USDT_1h.parquet
+2025-01-15 20:17:09,382 - data_processor.data_storage - INFO - Data storage initialized in: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-13\test_handle_missing_data0
+2025-01-15 20:17:09,382 - data_processor.processor - INFO - Data Processor initialized
+2025-01-15 20:18:29,021 - data_processor.data_storage - INFO - Data storage initialized in: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-14\test_save_and_load_data0
+2025-01-15 20:18:29,054 - data_processor.data_storage - INFO - Data saved successfully: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-14\test_save_and_load_data0\BTC_USDT_1h.parquet
+2025-01-15 20:18:29,082 - data_processor.data_storage - INFO - Data loaded successfully: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-14\test_save_and_load_data0\BTC_USDT_1h.parquet
+2025-01-15 20:18:29,104 - data_processor.data_storage - INFO - Data storage initialized in: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-14\test_load_nonexistent_data0
+2025-01-15 20:18:29,104 - data_processor.data_storage - INFO - Data storage initialized in: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-14\test_save_data_creates_directo0
+2025-01-15 20:18:29,104 - data_processor.data_storage - INFO - Data saved successfully: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-14\test_save_data_creates_directo0\BTC_USDT_1h.parquet
+2025-01-15 20:18:29,104 - data_processor.data_storage - INFO - Data storage initialized in: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-14\test_file_path_generation0
+2025-01-15 20:18:29,132 - data_processor.data_utils - WARNING - Dropping columns with high missing value proportion: Index(['C'], dtype='object')
+2025-01-15 20:18:29,154 - data_processor.data_utils - ERROR - Error calculating RSI: The data contains NaN values
+2025-01-15 20:18:29,154 - data_processor.data_utils - ERROR - Error calculating technical indicators: The data contains NaN values
+2025-01-15 20:18:29,154 - data_processor.data_utils - ERROR - Error normalizing feature values: "None of [Index(['close'], dtype='object')] are in the [columns]"
+2025-01-15 20:18:29,154 - data_processor.data_utils - ERROR - Error handling missing data: Input DataFrame is empty
+2025-01-15 20:18:29,154 - data_processor.data_utils - ERROR - Error calculating RSI: 'close'
+2025-01-15 20:18:29,154 - data_processor.data_utils - ERROR - Error calculating technical indicators: 'close'
+2025-01-15 20:18:29,171 - data_processor.data_utils - ERROR - Error calculating RSI: input array type is not double
+2025-01-15 20:18:29,171 - data_processor.data_utils - ERROR - Error calculating technical indicators: input array type is not double
+2025-01-15 20:18:29,221 - data_processor.data_utils - ERROR - Error calculating RSI: input array type is not double
+2025-01-15 20:18:29,221 - data_processor.data_utils - ERROR - Error calculating technical indicators: input array type is not double
+2025-01-15 20:18:29,221 - data_processor.data_utils - ERROR - Error calculating RSI: 'close'
+2025-01-15 20:18:29,221 - data_processor.data_utils - ERROR - Error calculating technical indicators: 'close'
+2025-01-15 20:18:29,248 - data_processor.data_storage - INFO - Data storage initialized in: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-14\test_process_chunk0
+2025-01-15 20:18:29,248 - data_processor.processor - INFO - Data Processor initialized
+2025-01-15 20:18:29,454 - data_processor.data_storage - INFO - Data storage initialized in: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-14\test_process_pair0
+2025-01-15 20:18:29,454 - data_processor.processor - INFO - Data Processor initialized
+2025-01-15 20:18:29,704 - data_processor.data_storage - INFO - Data saved successfully: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-14\test_process_pair0\BTC_USDT_1h.parquet
+2025-01-15 20:18:29,704 - data_processor.processor - INFO - Saved 217 remaining data points for BTC/USDT and 1h
+2025-01-15 20:18:29,804 - data_processor.data_storage - INFO - Data loaded successfully: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-14\test_process_pair0\BTC_USDT_1h.parquet
+2025-01-15 20:18:29,831 - data_processor.data_storage - INFO - Data storage initialized in: C:\Users\xRetr0\AppData\Local\Temp\pytest-of-xRetr0\pytest-14\test_handle_missing_data0
+2025-01-15 20:18:29,831 - data_processor.processor - INFO - Data Processor initialized
