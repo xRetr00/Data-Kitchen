@@ -1,0 +1,5 @@
+2025-01-15 18:15:21,991 - data_processor.data_utils - WARNING - RSI validation warning: RSI values contain NaN
+2025-01-15 18:15:21,996 - data_processor.data_utils - WARNING - MACD validation warning: MACD values contain NaN
+2025-01-15 18:15:22,065 - data_processor.data_utils - WARNING - Dropping columns with high missing value proportion: Index(['C'], dtype='object')
+2025-01-15 18:15:22,218 - data_processor.data_utils - WARNING - RSI validation warning: RSI values contain NaN
+2025-01-15 18:15:22,218 - data_processor.data_utils - WARNING - MACD validation warning: MACD values contain NaN
