@@ -1,81 +1,95 @@
 """
-اختبارات وحدة processor.py
+Data Processor Tests
 """
 
 import pytest
 import pandas as pd
-from unittest.mock import Mock, patch
+import numpy as np
+from datetime import datetime, timedelta
 from ..processor import DataProcessor
+from ..config import TECHNICAL_INDICATORS
 
 @pytest.fixture
-def processor():
-    """إنشاء معالج للاختبار"""
-    return DataProcessor()
+def processor(tmp_path):
+    """Create a DataProcessor instance for testing"""
+    return DataProcessor(str(tmp_path))
 
 @pytest.fixture
-def sample_ohlcv():
-    """إنشاء بيانات OHLCV للاختبار"""
-    return [
-        [1609459200000, 100, 101, 99, 100, 1000],  # 2021-01-01
-        [1609462800000, 101, 102, 100, 101, 1100],  # 2021-01-01
-        [1609466400000, 101, 103, 100, 102, 1200],  # 2021-01-01
-    ]
-
-def test_fetch_historical_data(processor, sample_ohlcv):
-    """اختبار جلب البيانات التاريخية"""
-    # تجهيز mock للـ exchange
-    processor.exchange.fetch_ohlcv = Mock(return_value=sample_ohlcv)
-    
-    df = processor.fetch_historical_data('BTC/USDT', '1h')
-    
-    # التحقق من استدعاء الدالة بشكل صحيح
-    processor.exchange.fetch_ohlcv.assert_called_once_with('BTC/USDT', '1h', limit=1000)
-    
-    # التحقق من تنسيق البيانات
-    assert isinstance(df, pd.DataFrame)
-    assert df.index.name == 'timestamp'
-    assert all(col in df.columns for col in ['open', 'high', 'low', 'close', 'volume'])
-
-def test_process_data(processor):
-    """اختبار معالجة البيانات"""
-    # إنشاء بيانات اختبار
-    dates = pd.date_range(start='2024-01-01', end='2024-01-10', freq='1H')
+def sample_data():
+    """Generate sample data"""
+    dates = pd.date_range(start='2023-01-01', end='2023-01-10', freq='1h')
     df = pd.DataFrame({
-        'open': range(len(dates)),
-        'high': range(len(dates)),
-        'low': range(len(dates)),
-        'close': range(len(dates)),
-        'volume': range(len(dates))
+        'open': np.random.rand(len(dates)),
+        'high': np.random.rand(len(dates)),
+        'low': np.random.rand(len(dates)),
+        'close': np.random.rand(len(dates)),
+        'volume': np.random.rand(len(dates))
     }, index=dates)
-    
-    result = processor.process_data(df)
-    
-    # التحقق من وجود المؤشرات الفنية
-    assert 'RSI_14' in result.columns
-    assert 'MACD' in result.columns
-    
-    # التحقق من تطبيع البيانات
-    feature_cols = [col for col in result.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
-    for col in feature_cols:
-        assert result[col].min() >= -1
-        assert result[col].max() <= 1
+    df.index.name = 'timestamp'
+    return df
 
-@patch('concurrent.futures.ThreadPoolExecutor')
-def test_process_all_pairs(mock_executor, processor):
-    """اختبار معالجة جميع الأزواج"""
-    mock_executor.return_value.__enter__.return_value = Mock()
+def test_process_chunk(processor, sample_data):
+    """Test processing a chunk of data"""
+    processed_data = processor.process_chunk(sample_data)
     
-    processor.process_all_pairs()
+    # Check that technical indicators are present
+    for indicator in TECHNICAL_INDICATORS:
+        if indicator == 'RSI':
+            assert f'RSI_{TECHNICAL_INDICATORS[indicator]["period"]}' in processed_data.columns
+        elif indicator == 'MACD':
+            macd_config = TECHNICAL_INDICATORS[indicator]
+            macd_name = f'MACD_{macd_config["fast_period"]}_{macd_config["slow_period"]}_{macd_config["signal_period"]}'
+            assert macd_name in processed_data.columns
+            assert f'MACD_Signal_{macd_config["fast_period"]}_{macd_config["slow_period"]}_{macd_config["signal_period"]}' in processed_data.columns
+        elif indicator in ['SMA', 'EMA']:
+            for period in TECHNICAL_INDICATORS[indicator]['periods']:
+                assert f'{indicator}_{period}' in processed_data.columns
     
-    # التحقق من استخدام ThreadPoolExecutor
-    mock_executor.assert_called_once()
+    # Check that data is normalized
+    for col in processed_data.columns:
+        if col != 'timestamp':
+            non_null_values = processed_data[col].dropna()
+            if len(non_null_values) > 0:
+                assert non_null_values.min() >= -1
+                assert non_null_values.max() <= 1
 
-def test_process_pair_error_handling(processor):
-    """اختبار معالجة الأخطاء"""
-    # تجهيز mock للـ exchange يرجع خطأ
-    processor.exchange.fetch_ohlcv = Mock(side_effect=Exception("API Error"))
+def test_process_pair(processor, sample_data, mocker):
+    """Test processing a trading pair"""
+    # Mock fetch_data_generator to return sample data
+    mocker.patch.object(
+        processor,
+        'fetch_data_generator',
+        return_value=[sample_data]
+    )
     
-    result = processor.process_pair('BTC/USDT', '1h')
+    pair = 'BTC/USDT'
+    timeframe = '1h'
+    result = processor.process_pair(pair, timeframe)
     
-    # التحقق من إرجاع None في حالة الخطأ
-    assert result is None
+    assert result is not None
+    assert isinstance(result, pd.DataFrame)
+    assert result.index.freq == '1h'
+    
+    # Check that data is saved
+    loaded_data = processor.data_storage.load_data(pair, timeframe)
+    pd.testing.assert_frame_equal(result, loaded_data)
+
+def test_handle_missing_data(processor):
+    """Test handling missing data"""
+    # Create a DataFrame with missing values
+    dates = pd.date_range(start='2023-01-01', end='2023-01-10', freq='1h')
+    df = pd.DataFrame({
+        'open': np.random.rand(len(dates)),
+        'high': np.random.rand(len(dates)),
+        'low': np.random.rand(len(dates)),
+        'close': np.random.rand(len(dates)),
+        'volume': np.random.rand(len(dates))
+    }, index=dates)
+    df.iloc[5:10] = np.nan
+    
+    processed_data = processor.process_chunk(df)
+    
+    # Check that basic columns have no missing values
+    basic_columns = ['open', 'high', 'low', 'close', 'volume']
+    for col in basic_columns:
+        assert not processed_data[col].isna().any()

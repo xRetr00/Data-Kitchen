@@ -1,69 +1,86 @@
 """
-اختبارات وحدة data_storage.py
+Tests for data_storage.py module
 """
 
-import pytest
-import pandas as pd
 import os
-from ..data_storage import DataStorage
-from ..config import PARQUET_DIR
+import shutil
+import pandas as pd
+import numpy as np
+import pytest
+from ..data_storage import DataStorage, PARQUET_DIR
 
 @pytest.fixture
-def storage():
-    """إنشاء كائن DataStorage للاختبار"""
-    return DataStorage()
+def storage(tmp_path):
+    """Create DataStorage object for testing"""
+    return DataStorage(str(tmp_path))
 
 @pytest.fixture
 def sample_data():
-    """إنشاء بيانات اختبار"""
-    dates = pd.date_range(start='2024-01-01', end='2024-01-10', freq='1H')
-    return pd.DataFrame({
-        'close': range(len(dates)),
-        'volume': range(len(dates))
+    """Create sample data for testing"""
+    dates = pd.date_range(start='2023-01-01', end='2023-01-10', freq='h')
+    df = pd.DataFrame({
+        'open': np.random.rand(len(dates)),
+        'high': np.random.rand(len(dates)),
+        'low': np.random.rand(len(dates)),
+        'close': np.random.rand(len(dates)),
+        'volume': np.random.rand(len(dates))
     }, index=dates)
+    df.index.name = 'timestamp'
+    return df
 
 def test_save_and_load_data(storage, sample_data):
-    """اختبار حفظ وتحميل البيانات"""
-    pair = 'BTC_USDT'
-    timeframe = '1h'
+    """Test saving and loading data"""
+    pair = "BTC/USDT"
+    timeframe = "1h"
     
-    # حفظ البيانات
+    # save data
     storage.save_data(sample_data, pair, timeframe)
     
-    # التحقق من وجود الملف
-    file_path = storage._get_file_path(pair, timeframe)
-    assert os.path.exists(file_path)
+    # load data
+    loaded_df = storage.load_data(pair, timeframe)
     
-    # تحميل البيانات
-    loaded_data = storage.load_data(pair, timeframe)
+    # check that data is the same
+    pd.testing.assert_frame_equal(sample_data, loaded_df)
     
-    # التحقق من تطابق البيانات
-    pd.testing.assert_frame_equal(sample_data, loaded_data)
+    # check that frequency is saved correctly
+    assert loaded_df.index.freq == sample_data.index.freq
 
 def test_load_nonexistent_data(storage):
-    """اختبار تحميل بيانات غير موجودة"""
-    result = storage.load_data('NONEXISTENT', '1h')
-    assert result is None
+    """Test loading nonexistent data"""
+    with pytest.raises(FileNotFoundError):
+        storage.load_data('NONEXISTENT', '1h')
 
-def test_save_data_creates_directory(storage, sample_data):
-    """اختبار إنشاء المجلد عند الحفظ"""
-    # حذف المجلد إذا كان موجوداً
-    if os.path.exists(PARQUET_DIR):
-        os.rmdir(PARQUET_DIR)
-    
-    # حفظ البيانات
-    storage.save_data(sample_data, 'TEST', '1h')
-    
-    # التحقق من إنشاء المجلد
-    assert os.path.exists(PARQUET_DIR)
-
-def test_file_path_generation(storage):
-    """اختبار إنشاء مسار الملف"""
+def test_save_data_creates_directory(tmp_path):
+    """Test that directory is created when saving data"""
+    storage = DataStorage(str(tmp_path))
     pair = 'BTC/USDT'
     timeframe = '1h'
     
-    file_path = storage._get_file_path(pair, timeframe)
+    # make sure directory does not exist
+    if os.path.exists(tmp_path):
+        shutil.rmtree(tmp_path)
     
-    # التحقق من تنسيق المسار
-    assert 'BTC_USDT_1h.parquet' in file_path
-    assert PARQUET_DIR in file_path
+    # save data
+    dates = pd.date_range(start='2023-01-01', end='2023-01-10', freq='h')
+    df = pd.DataFrame({
+        'open': np.random.rand(len(dates)),
+        'high': np.random.rand(len(dates)),
+        'low': np.random.rand(len(dates)),
+        'close': np.random.rand(len(dates)),
+        'volume': np.random.rand(len(dates))
+    }, index=dates)
+    df.index.name = 'timestamp'
+    
+    storage.save_data(df, pair, timeframe)
+    
+    # check that directory is created
+    assert os.path.exists(tmp_path)
+    assert os.path.exists(os.path.join(tmp_path, f"{pair.replace('/', '_')}_{timeframe}.parquet"))
+
+def test_file_path_generation(tmp_path):
+    """Test file path generation"""
+    storage = DataStorage(str(tmp_path))
+    pair = 'BTC/USDT'
+    timeframe = '1h'
+    expected_path = os.path.join(tmp_path, f"{pair.replace('/', '_')}_{timeframe}.parquet")
+    assert storage._get_file_path(pair, timeframe) == expected_path

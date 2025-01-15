@@ -18,22 +18,26 @@ class IndicatorValidationError(Exception):
 def validate_input_data(data: np.ndarray, indicator_name: str) -> None:
     """
     Validate input data
-    
+
     Args:
         data: Input data array
         indicator_name: Indicator name
-    
+
     Raises:
-        IndicatorValidationError: If input data is invalid
+        IndicatorValidationError: If the input data is invalid
     """
     if data is None or len(data) == 0:
-        raise IndicatorValidationError(f"Input data is empty for indicator {indicator_name}")
-    
-    if np.any(np.isnan(data)):
-        raise IndicatorValidationError(f"Input data contains NaN values for indicator {indicator_name}")
-    
-    if np.any(np.isinf(data)):
-        raise IndicatorValidationError(f"Input data contains infinite values for indicator {indicator_name}")
+        raise IndicatorValidationError("The data is empty")
+
+    try:
+        # Convert data to numeric if it's not already
+        numeric_data = data.astype(float)
+        
+        if np.any(np.isnan(numeric_data)):
+            raise IndicatorValidationError("The data contains NaN values")
+            
+    except (ValueError, TypeError):
+        raise IndicatorValidationError("The data must be numeric")
 
 def validate_rsi(rsi_values: np.ndarray) -> Tuple[bool, str]:
     """
@@ -95,66 +99,138 @@ def validate_sma(sma_values: np.ndarray, window: int, data_length: int) -> Tuple
     
     return True, ""
 
-def calculate_technical_indicators(df: pd.DataFrame, settings: dict) -> pd.DataFrame:
+def calculate_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     """
-    حساب المؤشرات الفنية مع التحقق من صحتها
+    Calculate RSI
+    
+    Args:
+        df: DataFrame with price data
+        period: RSI period
+        
+    Returns:
+        pd.DataFrame: DataFrame with calculated RSI values
     """
     try:
-        df = df.copy()
+        delta = df['close'].diff().dropna()
+        up, down = delta.copy(), delta.copy()
+        up[up < 0] = 0
+        down[down > 0] = 0
+        roll_up1 = up.ewm(com=period - 1, adjust=False).mean()
+        roll_down1 = down.ewm(com=period - 1, adjust=False).mean().abs()
+        RS = roll_up1 / roll_down1
+        RSI = 100.0 - (100.0 / (1.0 + RS))
+        df[f'RSI_{period}'] = RSI
+        return df
+    
+    except Exception as e:
+        logger.error(f"Error calculating RSI: {str(e)}")
+        return df
+
+def calculate_macd(df: pd.DataFrame, fast_period: int = 12, slow_period: int = 26, signal_period: int = 9) -> pd.DataFrame:
+    """Calculate MACD"""
+    try:
+        exp1 = df['close'].ewm(span=fast_period, adjust=False).mean()
+        exp2 = df['close'].ewm(span=slow_period, adjust=False).mean()
+        macd = exp1 - exp2
+        signal = macd.ewm(span=signal_period, adjust=False).mean()
         
-        # تحويل البيانات إلى النوع المناسب
-        close_prices = df['close'].astype(float).values
+        df[f'MACD_{fast_period}_{slow_period}_{signal_period}'] = macd
+        df[f'MACD_Signal_{fast_period}_{slow_period}_{signal_period}'] = signal
         
-        # معالجة القيم المفقودة قبل حساب المؤشرات
-        close_prices = pd.Series(close_prices).fillna(method='ffill').fillna(method='bfill').values
-        
-        validate_input_data(close_prices, "close prices")
-        
-        # حساب RSI
-        if 'RSI' in settings:
-            period = settings['RSI']['period']
-            # التأكد من وجود بيانات كافية لحساب RSI
-            if len(close_prices) > period:
-                rsi_values = talib.RSI(close_prices, timeperiod=period)
-                is_valid, error_msg = validate_rsi(rsi_values)
-                if not is_valid:
-                    logger.warning(f"RSI validation warning: {error_msg}")
-                    # معالجة القيم غير الصالحة
-                    rsi_values = pd.Series(rsi_values).fillna(method='ffill').fillna(50).values
-                df[f'RSI_{period}'] = rsi_values
-            else:
-                logger.warning(f"Not enough data to calculate RSI (need > {period} points)")
-        
-        # حساب MACD
-        if 'MACD' in settings:
-            macd_settings = settings['MACD']
-            macd, signal, _ = talib.MACD(
-                close_prices,
-                fastperiod=macd_settings['fast_period'],
-                slowperiod=macd_settings['slow_period'],
-                signalperiod=macd_settings['signal_period']
-            )
-            is_valid, error_msg = validate_macd(macd, signal)
-            if not is_valid:
-                logger.warning(f"MACD validation warning: {error_msg}")
-                # معالجة القيم غير الصالحة
-                macd = pd.Series(macd).fillna(method='ffill').fillna(0).values
-                signal = pd.Series(signal).fillna(method='ffill').fillna(0).values
-            df['MACD'] = macd
-            df['MACD_Signal'] = signal
-        
-        # حساب SMA
-        if 'SMA' in settings:
-            for period in settings['SMA']['periods']:
-                sma_values = talib.SMA(close_prices, timeperiod=period)
-                is_valid, error_msg = validate_sma(sma_values, period, len(close_prices))
-                if not is_valid:
-                    logger.warning(f"SMA validation warning: {error_msg}")
-                    # معالجة القيم غير الصالحة
-                    sma_values = pd.Series(sma_values).fillna(method='ffill').fillna(close_prices.mean()).values
-                df[f'SMA_{period}'] = sma_values
+        # Validate MACD values
+        if macd.isna().any():
+            logger.warning("MACD validation warning: MACD values contain NaN")
         
         return df
+    except Exception as e:
+        logger.error(f"Error calculating MACD: {str(e)}")
+        return df
+
+def calculate_sma(df: pd.DataFrame, window: int) -> pd.DataFrame:
+    """
+    Calculate SMA
+    
+    Args:
+        df: DataFrame with price data
+        window: SMA window size
+        
+    Returns:
+        pd.DataFrame: DataFrame with calculated SMA values
+    """
+    try:
+        df[f'SMA_{window}'] = df['close'].rolling(window=window).mean()
+        return df
+    
+    except Exception as e:
+        logger.error(f"Error calculating SMA: {str(e)}")
+        return df
+
+def calculate_ema(df: pd.DataFrame, window: int) -> pd.DataFrame:
+    """
+    Calculate EMA
+    
+    Args:
+        df: DataFrame with price data
+        window: EMA window size
+        
+    Returns:
+        pd.DataFrame: DataFrame with calculated EMA values
+    """
+    try:
+        df[f'EMA_{window}'] = df['close'].ewm(span=window, adjust=False).mean()
+        return df
+    
+    except Exception as e:
+        logger.error(f"Error calculating EMA: {str(e)}")
+        return df
+
+def calculate_technical_indicators(df: pd.DataFrame, indicators_config: dict) -> pd.DataFrame:
+    """
+    Calculate technical indicators
+    
+    Args:
+        df: DataFrame with price data
+        indicators_config: Technical indicators configuration
+        
+    Returns:
+        DataFrame with calculated technical indicators
+    """
+    try:
+        logger.debug(f"Starting technical indicators calculation with config: {indicators_config}")
+        result_df = df.copy()
+        
+        for indicator, params in indicators_config.items():
+            logger.debug(f"Calculating {indicator} with parameters: {params}")
+            
+            try:
+                if indicator == 'RSI':
+                    validate_input_data(df['close'].values, 'RSI')
+                    result_df[f'RSI_{params["period"]}'] = talib.RSI(df['close'].values, timeperiod=params['period'])
+                    
+                elif indicator == 'MACD':
+                    validate_input_data(df['close'].values, 'MACD')
+                    macd, signal, _ = talib.MACD(
+                        df['close'].values,
+                        fastperiod=params['fast_period'],
+                        slowperiod=params['slow_period'],
+                        signalperiod=params['signal_period']
+                    )
+                    result_df[f'MACD_{params["fast_period"]}_{params["slow_period"]}_{params["signal_period"]}'] = macd
+                    result_df[f'MACD_Signal_{params["fast_period"]}_{params["slow_period"]}_{params["signal_period"]}'] = signal
+                    
+                elif indicator == 'SMA':
+                    for period in params['periods']:
+                        validate_input_data(df['close'].values, f'SMA_{period}')
+                        result_df[f'SMA_{period}'] = talib.SMA(df['close'].values, timeperiod=period)
+                
+                logger.debug(f"Successfully calculated {indicator}")
+                
+            except Exception as e:
+                logger.error(f"Error calculating {indicator}: {str(e)}")
+                raise
+        
+        logger.debug("Technical indicators calculation completed successfully")
+        return result_df
         
     except Exception as e:
         logger.error(f"Error calculating technical indicators: {str(e)}")
@@ -172,10 +248,16 @@ def normalize_features(df: pd.DataFrame, feature_columns: List[str]) -> pd.DataF
         pd.DataFrame: Data frame with normalized feature values
     """
     try:
+        logger.debug(f"Starting normalization for columns: {feature_columns}")
         df = df.copy()
         scaler = MinMaxScaler()
         
         df[feature_columns] = scaler.fit_transform(df[feature_columns])
+        
+        # Clip values to ensure they are exactly between 0 and 1
+        df[feature_columns] = df[feature_columns].clip(0, 1)
+        
+        logger.debug(f"Normalization completed successfully. Data range: {df[feature_columns].min().to_dict()} to {df[feature_columns].max().to_dict()}")
         return df
     
     except Exception as e:
@@ -194,17 +276,27 @@ def handle_missing_data(df: pd.DataFrame, threshold: float = 0.1) -> pd.DataFram
         pd.DataFrame: Data frame with handled missing data
     """
     try:
-        # Calculate proportion of missing values for each column
-        missing_ratio = df.isnull().sum() / len(df)
+        logger.debug(f"Starting missing data handling. Input shape: {df.shape}")
         
-        # Drop columns with missing values above threshold
-        columns_to_drop = missing_ratio[missing_ratio > threshold].index
+        # Calculate missing value proportions
+        missing_proportions = df.isnull().mean()
+        missing_columns = missing_proportions[missing_proportions > 0].index.tolist()
+        
+        if missing_columns:
+            logger.debug(f"Detected missing values in columns: {missing_columns}")
+            logger.debug(f"Missing proportions: {missing_proportions[missing_columns].to_dict()}")
+        
+        # Drop columns with too many missing values
+        columns_to_drop = missing_proportions[missing_proportions > threshold].index
         if len(columns_to_drop) > 0:
             logger.warning(f"Dropping columns with high missing value proportion: {columns_to_drop}")
             df = df.drop(columns=columns_to_drop)
         
-        # Fill remaining missing values
-        df = df.fillna(method='ffill').fillna(method='bfill')
+        # Forward fill then backward fill missing values
+        df = df.ffill().bfill()
+        
+        logger.debug(f"Missing data handling completed. Output shape: {df.shape}")
+        logger.debug(f"Remaining missing values: {df.isnull().sum().to_dict()}")
         
         return df
     

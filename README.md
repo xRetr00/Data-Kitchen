@@ -1,30 +1,26 @@
-# معالج البيانات (Data Kitchen)
+# Data Processor (Data Kitchen)
 
-نظام معالجة بيانات فعال وبسيط لجمع وتنظيف وتحليل بيانات التداول. For Machine Learning Models Training Or Real Time Trading
+A professional and efficient data processing system designed for collecting, cleaning, and analyzing trading data, optimized for machine learning model training and real-time trading with ML models.
 
-## الميزات الرئيسية
+## Features
 
-- جمع البيانات التاريخية والمباشرة من Binance
-- معالجة متعددة المسارات للأزواج والإطارات الزمنية
-- حساب المؤشرات الفنية (RSI, MACD, SMA)
-- معالجة القيم المفقودة وتطبيع البيانات
-- تخزين فعال باستخدام تنسيق Parquet
-- نظام تسجيل شامل
+- Collecting historical and live data from Binance
+- Multi-threaded processing for pairs and time frames
+- Calculating technical indicators (RSI, MACD, SMA)
+- Handling missing values and normalizing data
+- Efficient storage using Parquet format
+- Comprehensive logging system
 
-## هيكل المشروع
+## Main Features
 
-```
-/data_processor/
-├── __init__.py
-├── processor.py     # المعالج الرئيسي
-├── logger.py        # إدارة التسجيل
-├── config.py        # الإعدادات
-├── data_utils.py    # وظائف المعالجة
-├── data_storage.py  # إدارة التخزين
-└── /tests/         # اختبارات الوحدة
-```
+- Collecting historical and live data from Binance
+- Multi-threaded processing for pairs and time frames
+- Calculating technical indicators (RSI, MACD, SMA)
+- Handling missing values and normalizing data
+- Efficient storage using Parquet format
+- Comprehensive logging system
 
-## المتطلبات
+## Requirements
 
 ```
 pandas>=1.5.0
@@ -36,105 +32,114 @@ scikit-learn>=1.0.0
 pytest>=7.0.0
 ```
 
-## التثبيت
+## Setup
 
-1. استنساخ المستودع:
+1. Clone the repository:
 ```bash
 git clone https://github.com/xRetr00/data-kitchen.git
 cd data-kitchen
 ```
 
-2. تثبيت المتطلبات:
+2. Install requirements:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. تكوين الإعدادات:
-- افتح `config.py`
-- أضف مفاتيح API الخاصة بك
-- عدّل قائمة الأزواج والإطارات الزمنية حسب الحاجة
+3. Setup configuration:
+- Open `config.py`
+- Add your API keys
+- Modify the pairs and time frames as needed
 
-## الاستخدام
+## Usage
 
-### المعالجة الأساسية
+### Basic Processing
 
 ```python
 from data_processor.processor import DataProcessor
 
-# إنشاء معالج جديد
+# Create a new processor
 processor = DataProcessor()
 
-# معالجة جميع الأزواج
+# Process all pairs
 processor.process_all_pairs()
 
-# معالجة زوج محدد
+# Process a specific pair
 processor.process_pair('BTC/USDT', '1h')
 ```
 
-### التداول المباشر
+### Trading Live
 
 ```python
-# معالجة البيانات في الوقت الفعلي
+# Process all pairs in real-time
 processor.process_all_pairs(is_live=True)
 ```
 
-## وصف الوحدات
+## Module Structure
 
 ### processor.py
-المعالج الرئيسي الذي يدير:
-- جمع البيانات من Binance
-- تنسيق البيانات وتنظيفها
-- حساب المؤشرات الفنية
-- معالجة متعددة المسارات
+The main processor:
+- Collecting data from Binance
+- Formatting and cleaning data
+- Calculating technical indicators
+- Multi-threaded processing
 
 ### data_utils.py
-وظائف معالجة البيانات:
-- حساب المؤشرات الفنية (RSI, MACD, SMA)
-- تطبيع البيانات
-- معالجة القيم المفقودة
+Utility functions for data processing:
+- Indicator calculations (RSI, MACD, SMA)
+- Data formatting
+- Handling missing values
 
 ### data_storage.py
-إدارة تخزين البيانات:
-- حفظ البيانات بتنسيق Parquet
-- تحميل البيانات السابقة
-- إدارة الملفات
+Data storage management:
+- Saving data in Parquet format
+- Loading previous data
+- File management
 
 ### logger.py
-نظام التسجيل:
-- تسجيل العمليات
-- تسجيل الأخطاء
-- تتبع الأداء
+Logging system:
+- Logging operations
+- Logging errors
+- Performance tracking
 
 ### config.py
-إعدادات النظام:
-- مفاتيح API
-- قوائم الأزواج والإطارات الزمنية
-- معلمات المؤشرات الفنية
+System configuration:
+- API keys
+- Pairs and time frames
+- Indicator parameters
 
-## أفضل الممارسات
+### memory_utils.py
+Memory management:
+- Memory usage tracking
+- Memory release
 
-1. **إدارة الذاكرة**
-   - استخدام معالجة الدفعات للبيانات الكبيرة
-   - تحرير الذاكرة بعد المعالجة
-   - استخدام المعالجة المتزامنة بحكمة
+### test units
+Unit tests for the data processor:
+- Test the main processor
+- Test data utils
+- Test data storage
+- Test logger
 
-2. **معالجة البيانات المفقودة**
-   - التحقق من نسبة البيانات المفقودة
-   - استخدام طرق ملء مناسبة
-   - توثيق القرارات
+## Best Practices
 
-3. **حساب المؤشرات**
-   - تجنب تسرب البيانات المستقبلية
-   - التحقق من صحة الحسابات
-   - مراقبة الأداء
+1. **Memory Management**
+   - Use batch processing for large datasets
+   - Release memory after processing
+   - Use concurrent processing wisely
 
-## المساهمة
+2. **Handling Missing Data**
+   - Check the percentage of missing data
+   - Use appropriate interpolation methods
+   - Document decisions
 
-1. انسخ المستودع
-2. أنشئ فرعاً جديداً
-3. قم بإجراء تغييراتك
-4. أرسل طلب سحب
+3. **Indicator Calculations**
+   - Avoid look-ahead bias
+   - Validate calculations
+   - Monitor performance
 
-## الترخيص
+## License
 
 MIT
+
+Made by [xRetr00](https://github.com/xRetr00)
+
+

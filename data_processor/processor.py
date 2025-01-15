@@ -1,9 +1,9 @@
 """
-المعالج الرئيسي للبيانات
+Data Processor
 """
 
 import pandas as pd
-from typing import Optional, Generator
+from typing import Optional, Generator, List
 from datetime import datetime
 import ccxt
 from concurrent.futures import ThreadPoolExecutor
@@ -27,23 +27,39 @@ from .config import (
 logger = setup_logger(__name__)
 
 class DataProcessor:
-    def __init__(self):
-        """Initialize Data Processor"""
+    """Data Processor"""
+    
+    def __init__(self, storage_dir: Optional[str] = None):
+        """
+        Initialize Data Processor
+        
+        Args:
+            storage_dir: Storage directory path. If not specified, default path will be used
+        """
         self.exchange = ccxt.binance({
             'apiKey': BINANCE_API_KEY,
             'secret': BINANCE_SECRET_KEY,
             'enableRateLimit': True
         })
-        self.storage = DataStorage()
+        self.data_storage = DataStorage(storage_dir)
+        logger.info(f"Data Processor initialized")
     
     def fetch_data_generator(
         self,
         pair: str,
         timeframe: str,
-        chunk_size: int = 1000
+        chunk_size: int = CHUNK_SIZE
     ) -> Generator[pd.DataFrame, None, None]:
         """
-        مولد لجلب البيانات على دفعات
+        Data fetcher generator
+        
+        Args:
+            pair: Trading pair
+            timeframe: Time frame
+            chunk_size: Chunk size
+            
+        Yields:
+            DataFrame with OHLCV data
         """
         try:
             since = int(START_DATE.timestamp() * 1000)
@@ -67,7 +83,10 @@ class DataProcessor:
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
                 df.set_index('timestamp', inplace=True)
                 
-                # تحسين استخدام الذاكرة
+                # Set time frame
+                df = df.asfreq(timeframe)
+                
+                # Optimize memory usage
                 df = optimize_dataframe(df)
                 
                 yield df
@@ -77,36 +96,45 @@ class DataProcessor:
                 if since >= end_timestamp:
                     break
                 
-                # التحقق من استخدام الذاكرة
+                # Check memory usage
                 if check_memory_threshold():
-                    logger.warning("تجاوز حد الذاكرة، إيقاف جلب البيانات مؤقتاً")
+                    logger.warning("Memory usage exceeded, temporarily stopping data fetch")
                     break
         
         except Exception as e:
-            logger.error(f"خطأ في جلب البيانات: {str(e)}")
+            logger.error(f"Error fetching data: {str(e)}")
             raise
     
     @log_memory_usage
-    def process_chunk(self, df: pd.DataFrame, normalize: bool = True) -> pd.DataFrame:
+    def process_chunk(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        معالجة دفعة من البيانات
+        Process a chunk of data
+
+        Args:
+            df: DataFrame with OHLCV data
+
+        Returns:
+            pd.DataFrame: Processed data with technical indicators
         """
         try:
-            # معالجة القيم المفقودة
+            # Make sure data is numeric
+            numeric_columns = ['open', 'high', 'low', 'close', 'volume']
+            df[numeric_columns] = df[numeric_columns].astype(float)
+
+            # Handle missing values
             df = handle_missing_data(df)
             
-            # حساب المؤشرات الفنية
+            # Calculate technical indicators
             df = calculate_technical_indicators(df, TECHNICAL_INDICATORS)
             
-            # تطبيع البيانات إذا كان مطلوباً
-            if normalize:
-                feature_columns = [col for col in df.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
-                df = normalize_features(df, feature_columns)
+            # Normalize features
+            feature_columns = [col for col in df.columns if col not in ['timestamp']]
+            df = normalize_features(df, feature_columns)
             
             return optimize_dataframe(df)
             
         except Exception as e:
-            logger.error(f"خطأ في معالجة الدفعة: {str(e)}")
+            logger.error(f"Error processing chunk: {str(e)}")
             raise
     
     @log_memory_usage
@@ -117,46 +145,53 @@ class DataProcessor:
         is_live: bool = False
     ) -> Optional[pd.DataFrame]:
         """
-        معالجة زوج عملات محدد
+        Process a specific trading pair
+        
+        Args:
+            pair: Trading pair
+            timeframe: Time frame
+            is_live: Whether this is a live process or not
+            
+        Returns:
+            DataFrame with processed data, or None if error occurred
         """
         try:
             all_data = []
+            chunk_count = 0
             
-            # معالجة البيانات على دفعات
+            # Process data in chunks
             for chunk in self.fetch_data_generator(pair, timeframe):
-                processed_chunk = self.process_chunk(chunk, normalize=not is_live)
+                processed_chunk = self.process_chunk(chunk)
                 all_data.append(processed_chunk)
+                chunk_count += 1
                 
-                # حفظ الذاكرة
-                if len(all_data) > 10:  # تجميع كل 10 دفعات
+                # Save data every certain number of chunks
+                if chunk_count >= TIMEFRAME_CHUNKS.get(timeframe, 10):
                     combined_data = pd.concat(all_data)
-                    self.storage.save_data(combined_data, pair, timeframe)
+                    # Preserve time frame
+                    combined_data = combined_data.asfreq(timeframe)
+                    self.data_storage.save_data(combined_data, pair, timeframe)
                     all_data = []
+                    chunk_count = 0
+                    logger.info(f"Saved {len(combined_data)} data points for {pair} and {timeframe}")
             
-            # معالجة الدفعات المتبقية
+            # Process remaining chunks
             if all_data:
                 final_data = pd.concat(all_data)
-                self.storage.save_data(final_data, pair, timeframe)
+                # Preserve time frame
+                final_data = final_data.asfreq(timeframe)
+                self.data_storage.save_data(final_data, pair, timeframe)
+                logger.info(f"Saved {len(final_data)} remaining data points for {pair} and {timeframe}")
                 return final_data
             
             return None
             
         except Exception as e:
-            logger.error(f"خطأ في معالجة الزوج {pair}: {str(e)}")
+            logger.error(f"Error processing {pair}: {str(e)}")
             return None
     
-    def process_all_pairs(self, is_live: bool = False) -> None:
-        """
-        معالجة جميع أزواج العملات
-        """
-        try:
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                for pair in TRADING_PAIRS:
-                    for timeframe in TIMEFRAMES:
-                        executor.submit(self.process_pair, pair, timeframe, is_live)
-            
-            logger.info("تمت معالجة جميع الأزواج بنجاح")
-        
-        except Exception as e:
-            logger.error(f"خطأ في معالجة جميع الأزواج: {str(e)}")
-            raise
+    def process_all_pairs(self, pairs: List[str], timeframes: List[str]) -> None:
+        """Process all trading pairs and time frames"""
+        for pair in pairs:
+            for timeframe in timeframes:
+                self.process_pair(pair, timeframe)
