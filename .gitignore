@@ -1,7 +1,7 @@
 .venv/
 .env
 .windsurfrules
-.logs
+logs/
 logs/data_processor.log
 data/
 data/parquet/
