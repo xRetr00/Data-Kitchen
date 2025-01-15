@@ -27,11 +27,11 @@ def validate_input_data(data: np.ndarray, indicator_name: str) -> None:
         IndicatorValidationError: If the input data is invalid
     """
     if data is None or len(data) == 0:
-        raise IndicatorValidationError(f"Input data for calculating {indicator_name} is empty")
+        raise IndicatorValidationError("The data is empty")
 
     try:
         # Convert data to numeric if it's not already
-        numeric_data = data.astype(float)
+        numeric_data = np.asarray(data, dtype=np.float64)
         
         if np.any(np.isnan(numeric_data)):
             raise IndicatorValidationError(f"Input data for calculating {indicator_name} contains missing values (NaN)")

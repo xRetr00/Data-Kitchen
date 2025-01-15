@@ -7,3 +7,4 @@ data/
 data/parquet/
 .coverage
 __pycache__/
+logs/data_processor.log
