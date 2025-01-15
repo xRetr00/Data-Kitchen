@@ -34,10 +34,10 @@ def validate_input_data(data: np.ndarray, indicator_name: str) -> None:
         numeric_data = np.asarray(data, dtype=np.float64)
         
         if np.any(np.isnan(numeric_data)):
-            raise IndicatorValidationError(f"Input data for calculating {indicator_name} contains missing values (NaN)")
+            raise IndicatorValidationError("The data contains NaN values")
             
     except (ValueError, TypeError):
-        raise IndicatorValidationError(f"Input data for calculating {indicator_name} must be numeric")
+        raise IndicatorValidationError("The data must be numeric")
 
 def validate_rsi(rsi_values: np.ndarray) -> Tuple[bool, str]:
     """
