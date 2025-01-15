@@ -1,0 +1,8 @@
+.venv/
+.env
+.windsurfrules
+.logs
+data/
+data/parquet/
+.coverage
+__pycache__/
