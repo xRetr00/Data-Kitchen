@@ -1,6 +1,6 @@
 # معالج البيانات (Data Kitchen)
 
-نظام معالجة بيانات فعال وبسيط لجمع وتنظيف وتحليل بيانات التداول.
+نظام معالجة بيانات فعال وبسيط لجمع وتنظيف وتحليل بيانات التداول. For Machine Learning Models Training Or Real Time Trading
 
 ## الميزات الرئيسية
 
@@ -30,6 +30,7 @@
 pandas>=1.5.0
 numpy>=1.21.0
 ccxt>=2.0.0
+#you need to download the ta-lib source to avoid build errors
 ta-lib>=0.4.0
 scikit-learn>=1.0.0
 pytest>=7.0.0
@@ -39,7 +40,7 @@ pytest>=7.0.0
 
 1. استنساخ المستودع:
 ```bash
-git clone https://github.com/yourusername/data-kitchen.git
+git clone https://github.com/xRetr00/data-kitchen.git
 cd data-kitchen
 ```
 
