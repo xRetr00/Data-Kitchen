@@ -1,15 +1,16 @@
 """
-Main Data Processor
+المعالج الرئيسي للبيانات
 """
 
 import pandas as pd
-from typing import Optional, List
+from typing import Optional, Generator
 from datetime import datetime
 import ccxt
 from concurrent.futures import ThreadPoolExecutor
 from .data_storage import DataStorage
 from .data_utils import calculate_technical_indicators, normalize_features, handle_missing_data
 from .logger import setup_logger
+from .memory_utils import log_memory_usage, optimize_dataframe, check_memory_threshold
 from .config import (
     BINANCE_API_KEY,
     BINANCE_SECRET_KEY,
@@ -35,105 +36,80 @@ class DataProcessor:
         })
         self.storage = DataStorage()
     
-    def fetch_historical_data(
+    def fetch_data_generator(
         self,
         pair: str,
         timeframe: str,
-    ) -> Optional[pd.DataFrame]:
+        chunk_size: int = 1000
+    ) -> Generator[pd.DataFrame, None, None]:
         """
-        Fetch Historical Data
-        
-        Args:
-            pair: Trading Pair
-            timeframe: Timeframe
-            
-        Returns:
-            pd.DataFrame: DataFrame with Historical Data
+        مولد لجلب البيانات على دفعات
         """
         try:
-            # Convert dates to timestamp in milliseconds
             since = int(START_DATE.timestamp() * 1000)
             end_timestamp = int(END_DATE.timestamp() * 1000)
             
-            # Fetch data in chunks
-            all_ohlcv = []
             while since < end_timestamp:
                 ohlcv = self.exchange.fetch_ohlcv(
                     pair,
                     timeframe,
                     since=since,
-                    limit=1000  # Maximum allowed by Binance
+                    limit=chunk_size
                 )
                 
                 if not ohlcv:
                     break
                 
-                all_ohlcv.extend(ohlcv)
-                since = ohlcv[-1][0] + 1  # Next timestamp after the last chunk
+                df = pd.DataFrame(
+                    ohlcv,
+                    columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
+                )
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                df.set_index('timestamp', inplace=True)
                 
-                # Check if we have reached the end date
+                # تحسين استخدام الذاكرة
+                df = optimize_dataframe(df)
+                
+                yield df
+                
+                since = ohlcv[-1][0] + 1
+                
                 if since >= end_timestamp:
                     break
-            
-            if not all_ohlcv:
-                logger.warning(f"No data found for pair {pair} in timeframe {timeframe}")
-                return None
-            
-            # Convert data to DataFrame
-            df = pd.DataFrame(
-                all_ohlcv,
-                columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
-            )
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            df.set_index('timestamp', inplace=True)
-            
-            # Check if the number of candles is as expected
-            expected_candles = TIMEFRAME_CHUNKS[timeframe]
-            if len(df) < expected_candles * 0.9:  # Allow 10% data loss
-                logger.warning(
-                    f"Number of candles received ({len(df)}) is less than expected ({expected_candles}) "
-                    f"for pair {pair} in timeframe {timeframe}"
-                )
-            
-            return df
+                
+                # التحقق من استخدام الذاكرة
+                if check_memory_threshold():
+                    logger.warning("تجاوز حد الذاكرة، إيقاف جلب البيانات مؤقتاً")
+                    break
         
         except Exception as e:
-            logger.error(f"Error fetching historical data: {str(e)}")
-            return None
+            logger.error(f"خطأ في جلب البيانات: {str(e)}")
+            raise
     
-    def process_data(
-        self,
-        df: pd.DataFrame,
-        normalize: bool = True
-    ) -> pd.DataFrame:
+    @log_memory_usage
+    def process_chunk(self, df: pd.DataFrame, normalize: bool = True) -> pd.DataFrame:
         """
-        Process Raw Data
-        
-        Args:
-            df: Raw DataFrame
-            normalize: Normalize Data
-            
-        Returns:
-            pd.DataFrame: Processed DataFrame
+        معالجة دفعة من البيانات
         """
         try:
-            # Handle missing values
+            # معالجة القيم المفقودة
             df = handle_missing_data(df)
             
-            # Calculate technical indicators
+            # حساب المؤشرات الفنية
             df = calculate_technical_indicators(df, TECHNICAL_INDICATORS)
             
-            # Normalize data if required
+            # تطبيع البيانات إذا كان مطلوباً
             if normalize:
                 feature_columns = [col for col in df.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
                 df = normalize_features(df, feature_columns)
             
-            return df
-        
+            return optimize_dataframe(df)
+            
         except Exception as e:
-            logger.error(f"Error processing data: {str(e)}")
+            logger.error(f"خطأ في معالجة الدفعة: {str(e)}")
             raise
     
+    @log_memory_usage
     def process_pair(
         self,
         pair: str,
@@ -141,40 +117,37 @@ class DataProcessor:
         is_live: bool = False
     ) -> Optional[pd.DataFrame]:
         """
-        Process a Specific Trading Pair
-        
-        Args:
-            pair: Trading Pair
-            timeframe: Timeframe
-            is_live: Is it live data?
-            
-        Returns:
-            pd.DataFrame: Processed DataFrame
+        معالجة زوج عملات محدد
         """
         try:
-            # Fetch data
-            df = self.fetch_historical_data(pair, timeframe)
-            if df is None:
-                return None
+            all_data = []
             
-            # Process data
-            df = self.process_data(df, normalize=not is_live)
+            # معالجة البيانات على دفعات
+            for chunk in self.fetch_data_generator(pair, timeframe):
+                processed_chunk = self.process_chunk(chunk, normalize=not is_live)
+                all_data.append(processed_chunk)
+                
+                # حفظ الذاكرة
+                if len(all_data) > 10:  # تجميع كل 10 دفعات
+                    combined_data = pd.concat(all_data)
+                    self.storage.save_data(combined_data, pair, timeframe)
+                    all_data = []
             
-            # Save data
-            self.storage.save_data(df, pair, timeframe)
+            # معالجة الدفعات المتبقية
+            if all_data:
+                final_data = pd.concat(all_data)
+                self.storage.save_data(final_data, pair, timeframe)
+                return final_data
             
-            return df
-        
+            return None
+            
         except Exception as e:
-            logger.error(f"Error processing pair {pair}: {str(e)}")
+            logger.error(f"خطأ في معالجة الزوج {pair}: {str(e)}")
             return None
     
     def process_all_pairs(self, is_live: bool = False) -> None:
         """
-        Process All Trading Pairs
-        
-        Args:
-            is_live: Is it live data?
+        معالجة جميع أزواج العملات
         """
         try:
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -182,8 +155,8 @@ class DataProcessor:
                     for timeframe in TIMEFRAMES:
                         executor.submit(self.process_pair, pair, timeframe, is_live)
             
-            logger.info("All pairs processed successfully")
+            logger.info("تمت معالجة جميع الأزواج بنجاح")
         
         except Exception as e:
-            logger.error(f"Error processing all pairs: {str(e)}")
+            logger.error(f"خطأ في معالجة جميع الأزواج: {str(e)}")
             raise
