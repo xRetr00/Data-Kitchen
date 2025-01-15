@@ -3,3 +3,40 @@
 2025-01-15 18:15:22,065 - data_processor.data_utils - WARNING - Dropping columns with high missing value proportion: Index(['C'], dtype='object')
 2025-01-15 18:15:22,218 - data_processor.data_utils - WARNING - RSI validation warning: RSI values contain NaN
 2025-01-15 18:15:22,218 - data_processor.data_utils - WARNING - MACD validation warning: MACD values contain NaN
+2025-01-15 18:29:14,073 - data_processor.processor - ERROR - Error fetching historical data: 
+2025-01-15 18:30:50,263 - data_processor.data_utils - WARNING - RSI validation warning: RSI values contain NaN
+2025-01-15 18:30:50,284 - data_processor.data_utils - WARNING - MACD validation warning: MACD values contain NaN
+2025-01-15 18:31:04,407 - data_processor.data_utils - WARNING - RSI validation warning: RSI values contain NaN
+2025-01-15 18:31:04,410 - data_processor.data_utils - WARNING - MACD validation warning: MACD values contain NaN
+2025-01-15 18:31:06,281 - data_processor.data_utils - WARNING - RSI validation warning: RSI values contain NaN
+2025-01-15 18:31:06,283 - data_processor.data_utils - WARNING - MACD validation warning: MACD values contain NaN
+2025-01-15 18:31:06,459 - data_processor.processor - ERROR - Error processing pair BTC/USDT: DataType expected, got <class 'unittest.mock.Mock'>
+2025-01-15 18:31:07,372 - data_processor.data_utils - WARNING - RSI validation warning: RSI values contain NaN
+2025-01-15 18:31:07,374 - data_processor.data_utils - WARNING - MACD validation warning: MACD values contain NaN
+2025-01-15 18:31:07,641 - data_processor.data_utils - WARNING - RSI validation warning: RSI values contain NaN
+2025-01-15 18:31:07,643 - data_processor.data_utils - WARNING - MACD validation warning: MACD values contain NaN
+2025-01-15 18:31:07,660 - data_processor.processor - ERROR - Error processing pair ETH/USDT: DataType expected, got <class 'unittest.mock.Mock'>
+2025-01-15 18:31:10,686 - data_processor.data_utils - WARNING - RSI validation warning: RSI values contain NaN
+2025-01-15 18:31:10,687 - data_processor.data_utils - WARNING - MACD validation warning: MACD values contain NaN
+2025-01-15 18:31:10,705 - data_processor.processor - ERROR - Error processing pair BNB/USDT: DataType expected, got <class 'unittest.mock.Mock'>
+2025-01-15 18:31:11,586 - data_processor.data_utils - WARNING - RSI validation warning: RSI values contain NaN
+2025-01-15 18:31:11,588 - data_processor.data_utils - WARNING - MACD validation warning: MACD values contain NaN
+2025-01-15 18:31:14,792 - data_processor.data_utils - WARNING - RSI validation warning: RSI values contain NaN
+2025-01-15 18:31:14,795 - data_processor.data_utils - WARNING - MACD validation warning: MACD values contain NaN
+2025-01-15 18:31:14,827 - data_processor.processor - ERROR - Error processing pair BTC/USDT: DataType expected, got <class 'unittest.mock.Mock'>
+2025-01-15 18:31:16,362 - data_processor.data_utils - WARNING - RSI validation warning: RSI values contain NaN
+2025-01-15 18:31:16,364 - data_processor.data_utils - WARNING - MACD validation warning: MACD values contain NaN
+2025-01-15 18:31:16,394 - data_processor.processor - ERROR - Error processing pair ETH/USDT: DataType expected, got <class 'unittest.mock.Mock'>
+2025-01-15 18:31:17,267 - data_processor.data_utils - WARNING - RSI validation warning: RSI values contain NaN
+2025-01-15 18:31:17,270 - data_processor.data_utils - WARNING - MACD validation warning: MACD values contain NaN
+2025-01-15 18:31:19,375 - data_processor.data_utils - WARNING - RSI validation warning: RSI values contain NaN
+2025-01-15 18:31:19,377 - data_processor.data_utils - WARNING - MACD validation warning: MACD values contain NaN
+2025-01-15 18:31:19,395 - data_processor.processor - ERROR - Error processing pair ADA/USDT: DataType expected, got <class 'unittest.mock.Mock'>
+2025-01-15 18:31:19,558 - data_processor.data_utils - WARNING - RSI validation warning: RSI values contain NaN
+2025-01-15 18:31:19,561 - data_processor.data_utils - WARNING - MACD validation warning: MACD values contain NaN
+2025-01-15 18:31:19,585 - data_processor.processor - ERROR - Error processing pair BNB/USDT: DataType expected, got <class 'unittest.mock.Mock'>
+2025-01-15 18:31:20,783 - data_processor.data_utils - WARNING - RSI validation warning: RSI values contain NaN
+2025-01-15 18:31:20,786 - data_processor.data_utils - WARNING - MACD validation warning: MACD values contain NaN
+2025-01-15 18:31:20,810 - data_processor.processor - ERROR - Error processing pair ADA/USDT: DataType expected, got <class 'unittest.mock.Mock'>
+2025-01-15 18:31:20,811 - data_processor.processor - INFO - All pairs processed successfully
+2025-01-15 18:31:21,273 - data_processor.processor - ERROR - Error fetching historical data: API Error
