@@ -190,6 +190,41 @@ class DataProcessor:
             logger.error(f"Error processing {pair}: {str(e)}")
             return None
     
+    def configure(self, indicators: list, missing_threshold: float, chunk_size: int):
+        """
+        Configure the data processor
+
+        Args:
+            indicators: List of technical indicators to calculate
+            missing_threshold: Threshold for handling missing data
+            chunk_size: Size of data chunks to process
+        """
+        self.indicators_config = {}
+        
+        # Configure indicators
+        if 'RSI' in indicators:
+            self.indicators_config['RSI'] = {'period': 14}
+        
+        if 'MACD' in indicators:
+            self.indicators_config['MACD'] = {
+                'fast_period': 12,
+                'slow_period': 26,
+                'signal_period': 9
+            }
+        
+        if 'SMA' in indicators:
+            self.indicators_config['SMA'] = {'periods': [20, 50, 200]}
+            
+        if 'EMA' in indicators:
+            self.indicators_config['EMA'] = {'periods': [20, 50, 200]}
+        
+        # Configure other parameters
+        self.missing_threshold = missing_threshold
+        self.chunk_size = chunk_size
+        
+        logger.info(f"Data processor configured with: indicators={indicators}, "
+                   f"missing_threshold={missing_threshold}, chunk_size={chunk_size}")
+    
     def process_all_pairs(self, pairs: List[str], timeframes: List[str]) -> None:
         """Process all trading pairs and time frames"""
         for pair in pairs:

@@ -1,24 +1,29 @@
-# Data Processor (Data Kitchen)
+# Data Kitchen
 
-A professional and efficient data processing system designed for collecting, cleaning, and analyzing trading data, optimized for machine learning model training and real-time trading with ML models.
+A professional and efficient data processing system designed for high-performance financial data processing, optimized for machine learning applications and real-time trading.
 
-## Features
+## Key Features
 
-- Collecting historical and live data from Binance
-- Multi-threaded processing for pairs and time frames
-- Calculating technical indicators (RSI, MACD, SMA)
-- Handling missing values and normalizing data
-- Efficient storage using Parquet format
-- Comprehensive logging system
+- **Real-time Data Processing**: Collect and process live data from Binance
+- **Multi-Asset Support**: Handle multiple trading pairs simultaneously
+- **Technical Analysis**: Calculate key indicators (RSI, MACD, SMA, EMA)
+- **Data Validation**: Robust error checking and missing data handling
+- **Efficient Storage**: Optimized Parquet format with chunked processing
+- **Memory Management**: Efficient handling of large datasets
+- **Comprehensive Logging**: Detailed operation tracking and error reporting
 
-## Main Features
+## Project Structure
 
-- Collecting historical and live data from Binance
-- Multi-threaded processing for pairs and time frames
-- Calculating technical indicators (RSI, MACD, SMA)
-- Handling missing values and normalizing data
-- Efficient storage using Parquet format
-- Comprehensive logging system
+```
+/data_processor/
+├──  __init__.py    # Package initialization
+├──  processor.py   # Core processing logic
+├──  logger.py      # Logging utilities
+├──  config.py      # Configuration settings
+├──  data_utils.py  # Data handling utilities
+├── data_storage.py # Data storage management
+└──  /logs/         # Log files directory
+```
 
 ## Requirements
 
@@ -26,13 +31,12 @@ A professional and efficient data processing system designed for collecting, cle
 pandas>=1.5.0
 numpy>=1.21.0
 ccxt>=2.0.0
-#you need to download the ta-lib source to avoid build errors
-ta-lib>=0.4.0
+ta-lib>=0.4.0  # Requires ta-lib source installation
 scikit-learn>=1.0.0
 pytest>=7.0.0
 ```
 
-## Setup
+## Installation
 
 1. Clone the repository:
 ```bash
@@ -40,106 +44,123 @@ git clone https://github.com/xRetr00/data-kitchen.git
 cd data-kitchen
 ```
 
-2. Install requirements:
+2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Setup configuration:
-- Open `config.py`
-- Add your API keys
-- Modify the pairs and time frames as needed
+3. Configure settings:
+Edit `config.py` to set:
+- API credentials
+- Trading pairs
+- Timeframes
+- Technical indicators
+- Processing parameters
 
 ## Usage
 
-### Basic Processing
+### Basic Data Processing
 
 ```python
 from data_processor.processor import DataProcessor
 
-# Create a new processor
+# Initialize processor
 processor = DataProcessor()
 
-# Process all pairs
-processor.process_all_pairs()
+# Process specific pair
+processor.process_pair(
+    pair='BTC/USDT',
+    timeframe='1h'
+)
 
-# Process a specific pair
-processor.process_pair('BTC/USDT', '1h')
+# Process all configured pairs
+processor.process_all_pairs()
 ```
 
-### Trading Live
+### Real-time Processing
 
 ```python
-# Process all pairs in real-time
+# Start real-time processing
 processor.process_all_pairs(is_live=True)
 ```
 
-## Module Structure
+### Data Storage
 
-### processor.py
-The main processor:
-- Collecting data from Binance
-- Formatting and cleaning data
-- Calculating technical indicators
-- Multi-threaded processing
+```python
+from data_processor.data_storage import DataStorage
 
-### data_utils.py
-Utility functions for data processing:
-- Indicator calculations (RSI, MACD, SMA)
-- Data formatting
-- Handling missing values
+# Initialize storage
+storage = DataStorage()
 
-### data_storage.py
-Data storage management:
-- Saving data in Parquet format
-- Loading previous data
-- File management
+# Save processed data
+storage.save_data(data, pair='BTC/USDT', timeframe='1h')
 
-### logger.py
-Logging system:
-- Logging operations
-- Logging errors
-- Performance tracking
+# Load historical data
+data = storage.load_data(pair='BTC/USDT', timeframe='1h')
+```
 
-### config.py
-System configuration:
-- API keys
-- Pairs and time frames
-- Indicator parameters
+## Configuration
 
-### memory_utils.py
-Memory management:
-- Memory usage tracking
-- Memory release
+The system is configured through `config.py`:
 
-### test units
-Unit tests for the data processor:
-- Test the main processor
-- Test data utils
-- Test data storage
-- Test logger
+```python
+CONFIG = {
+    'pairs': ['BTC/USDT', 'ETH/USDT'],
+    'timeframes': ['1h', '4h', '1d'],
+    'indicators': {
+        'RSI': {'period': 14},
+        'MACD': {
+            'fast_period': 12,
+            'slow_period': 26,
+            'signal_period': 9
+        },
+        'SMA': {'periods': [20, 50, 200]},
+        'EMA': {'periods': [20, 50, 200]}
+    },
+    'processing': {
+        'chunk_size': 1000,
+        'missing_threshold': 0.1
+    }
+}
+```
 
-## Best Practices
+## Error Handling
 
-1. **Memory Management**
-   - Use batch processing for large datasets
-   - Release memory after processing
-   - Use concurrent processing wisely
+The system includes comprehensive error handling:
+- Data validation
+- API connection errors
+- Missing data management
+- Memory overflow protection
 
-2. **Handling Missing Data**
-   - Check the percentage of missing data
-   - Use appropriate interpolation methods
-   - Document decisions
+## Logging
 
-3. **Indicator Calculations**
-   - Avoid look-ahead bias
-   - Validate calculations
-   - Monitor performance
+Detailed logging is available in the `/logs` directory:
+- Processing operations
+- Error tracking
+- Performance metrics
+- Data validation results
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
-MIT
+MIT License - see LICENSE file for details
 
-Made by [xRetr00](https://github.com/xRetr00)
+## Acknowledgments
 
+- [ccxt](https://github.com/ccxt/ccxt)
+- [ta-lib](https://github.com/ta-lib/ta-lib)
+- [pandas](https://pandas.pydata.org/)
+- [numpy](https://numpy.org/)
+- [pytest](https://pytest.org/)
+- [pytest-cov](https://pytest-cov.readthedocs.io/en/latest/)
 
+## Author
+
+- [xRetr00](https://github.com/xRetr00)
