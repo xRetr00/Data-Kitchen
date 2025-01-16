@@ -110,13 +110,13 @@ class DataProcessor:
             raise
     
     @log_memory_usage
-    def process_chunk(self, df: pd.DataFrame, pair: str) -> pd.DataFrame:
+    def process_chunk(self, df: pd.DataFrame, pair: Optional[str] = None) -> pd.DataFrame:
         """
         Process a chunk of data
 
         Args:
             df: DataFrame with OHLCV data
-            pair: Trading pair
+            pair: Trading pair (optional)
 
         Returns:
             pd.DataFrame: Processed data with technical indicators
@@ -128,20 +128,21 @@ class DataProcessor:
 
             # Validate and clean data
             df, validation_report = self.validator.validate_dataset(df)
-            if validation_report['issues']:
+            if validation_report.get('issues'):
                 logger.warning(f"Data validation issues: {validation_report['issues']}")
             
-            # Add sentiment features if available
-            try:
-                sentiment_df = self.sentiment_analyzer.get_sentiment_features(
-                    pair,
-                    df.index[0],
-                    df.index[-1]
-                )
-                if not sentiment_df.empty:
-                    df = df.join(sentiment_df)
-            except Exception as e:
-                logger.warning(f"Error adding sentiment features: {str(e)}")
+            # Add sentiment features if pair is provided
+            if pair:
+                try:
+                    sentiment_df = self.sentiment_analyzer.get_sentiment_features(
+                        pair,
+                        df.index[0],
+                        df.index[-1]
+                    )
+                    if not sentiment_df.empty:
+                        df = df.join(sentiment_df)
+                except Exception as e:
+                    logger.warning(f"Error adding sentiment features: {str(e)}")
             
             # Calculate technical indicators
             df = calculate_technical_indicators(df, TECHNICAL_INDICATORS)

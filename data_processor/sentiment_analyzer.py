@@ -4,7 +4,7 @@ Sentiment analysis module for Data Kitchen
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Any
 from datetime import datetime, timedelta
 import requests
 from bs4 import BeautifulSoup
@@ -98,30 +98,21 @@ class CacheManager:
 
 class SentimentAnalyzer:
     def __init__(self, config: Optional[Dict] = None):
-        """
-        Initialize SentimentAnalyzer
-        
-        Args:
-            config: Configuration dictionary
-        """
+        """تهيئة محلل المشاعر"""
         self.config = config or {
             'max_articles': 100,
-            'cache_duration': 3600,
-            'batch_size': 10,
-            'min_article_length': 100,
-            'max_workers': 4,
-            'cache_cleanup_interval': 86400,  # 24 hours
+            'min_article_length': 50,
             'sources': {
-                'reddit': ['r/cryptocurrency', 'r/bitcoin', 'r/ethereum'],
-                'news': ['cointelegraph.com', 'coindesk.com']
+                'reddit': ['cryptocurrency', 'bitcoin', 'ethereum'],
+                'news': ['cointelegraph.com']
             }
         }
-        self.cache = CacheManager('cache/sentiment')
+        self.cache = CacheManager('cache')  # استخدام CacheManager
         self.last_cleanup = time.time()
         
     def _should_cleanup_cache(self) -> bool:
         """Check if cache cleanup is needed"""
-        return (time.time() - self.last_cleanup) > self.config['cache_cleanup_interval']
+        return (time.time() - self.last_cleanup) > self.config.get('cache_cleanup_interval', 3600)
     
     def _cleanup_cache_if_needed(self):
         """Clean up cache if needed"""
@@ -129,174 +120,185 @@ class SentimentAnalyzer:
             self.cache.cleanup()
             self.last_cleanup = time.time()
     
-    def get_sentiment_features(self, pair: str, start_date: datetime, 
-                             end_date: datetime) -> pd.DataFrame:
-        """
-        Get sentiment features for a trading pair
-        
-        Args:
-            pair: Trading pair (e.g., 'BTC/USDT')
-            start_date: Start date for sentiment analysis
-            end_date: End date for sentiment analysis
-            
-        Returns:
-            DataFrame with sentiment features
-        """
+    def get_sentiment_features(self, currency: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
+        """استخراج ميزات المشاعر للعملة في الفترة المحددة"""
         try:
-            self._cleanup_cache_if_needed()
-            
-            # Get base currency (e.g., 'BTC' from 'BTC/USDT')
-            currency = pair.split('/')[0].lower()
-            
-            # Initialize sentiment data
             dates = pd.date_range(start_date, end_date, freq='D')
-            sentiment_data = []
+            sentiments = []
             
-            # Process dates in parallel using ProcessPoolExecutor for CPU-bound tasks
-            with ProcessPoolExecutor(max_workers=self.config['max_workers']) as executor:
-                # Create tasks for each date
-                future_to_date = {
-                    executor.submit(self._get_daily_sentiment, currency, date): date
-                    for date in dates
-                }
-                
-                # Process results as they complete
-                for future in future_to_date:
-                    try:
-                        sentiment_data.append(future.result())
-                    except Exception as e:
-                        logger.error(f"Error processing date {future_to_date[future]}: {str(e)}")
+            for date in dates:
+                sentiment = self._get_daily_sentiment(currency, date)
+                sentiment['date'] = date
+                sentiments.append(sentiment)
             
-            # Create DataFrame
-            df = pd.DataFrame(sentiment_data)
-            if df.empty:
+            if not sentiments:
                 return pd.DataFrame()
                 
+            df = pd.DataFrame(sentiments)
             df.set_index('date', inplace=True)
-            
-            # Resample to hourly data and forward fill
-            df = df.resample('1H').ffill()
-            
             return df
             
         except Exception as e:
-            logger.error(f"Error getting sentiment for {pair}: {str(e)}")
+            logger.error(f"Error getting sentiment for {currency}: {str(e)}")
             return pd.DataFrame()
-    
+
     def _get_daily_sentiment(self, currency: str, date: datetime) -> Dict:
-        """Get sentiment data for a specific day"""
-        cache_key = hashlib.md5(f"{currency}_{date.date()}".encode()).hexdigest()
-        
-        # Check cache
-        cached_data = self.cache.get(cache_key)
-        if cached_data:
-            return cached_data
-        
+        """حساب المشاعر اليومية"""
         try:
-            # Collect text data from various sources using ThreadPoolExecutor for I/O-bound tasks
+            # التحقق من التخزين المؤقت
+            cache_key = self._get_cache_key(currency, date)
+            cached_data = self._get_from_cache(cache_key)
+        
+            if cached_data:
+                return cached_data
+            
+            # جمع النصوص
             texts = []
-            with ThreadPoolExecutor(max_workers=self.config['batch_size']) as executor:
-                # Reddit scraping tasks
-                reddit_futures = [
-                    executor.submit(self._scrape_reddit, currency, subreddit, date)
-                    for subreddit in self.config['sources']['reddit']
-                ]
-                
-                # News scraping tasks
-                news_futures = [
-                    executor.submit(self._scrape_news, currency, domain, date)
-                    for domain in self.config['sources']['news']
-                ]
-                
-                # Collect results
-                for future in reddit_futures + news_futures:
-                    try:
-                        texts.extend(future.result())
-                    except Exception as e:
-                        logger.warning(f"Error in scraping task: {str(e)}")
+        
+            # جمع النصوص من Reddit
+            for subreddit in self.config['sources']['reddit']:
+                reddit_texts = self._scrape_reddit(subreddit, currency, date)
+                texts.extend(reddit_texts)
             
-            # Filter and clean texts
-            texts = [
-                text for text in texts 
-                if len(text) >= self.config['min_article_length']
-            ][:self.config['max_articles']]
+            # جمع النصوص من مصادر الأخبار
+            for news_source in self.config['sources']['news']:
+                news_texts = self._scrape_news(currency, news_source, date)
+                texts.extend(news_texts)
             
-            # Calculate sentiment metrics
-            sentiments = [TextBlob(text).sentiment for text in texts]
+            if not texts:
+                return {
+                    'sentiment_mean': 0.0,
+                    'sentiment_std': 0.0,
+                    'subjectivity_mean': 0.0,
+                    'text_count': 0
+                }
             
-            data = {
-                'date': date,
-                'sentiment_mean': np.mean([s.polarity for s in sentiments]) if sentiments else 0,
-                'sentiment_std': np.std([s.polarity for s in sentiments]) if sentiments else 0,
-                'subjectivity_mean': np.mean([s.subjectivity for s in sentiments]) if sentiments else 0,
+            # حساب المشاعر
+            sentiments = []
+            subjectivities = []
+        
+            for text in texts:
+                blob = TextBlob(text)
+                sentiments.append(blob.sentiment.polarity)
+                subjectivities.append(blob.sentiment.subjectivity)
+            
+            result = {
+                'sentiment_mean': float(np.mean(sentiments)),
+                'sentiment_std': float(np.std(sentiments)),
+                'subjectivity_mean': float(np.mean(subjectivities)),
                 'text_count': len(texts)
             }
-            
-            # Cache the result
-            self.cache.set(cache_key, data, self.config['cache_duration'])
-            
-            return data
-            
+        
+            # حفظ في التخزين المؤقت
+            self._save_to_cache(cache_key, result)
+        
+            return result
+        
         except Exception as e:
-            logger.error(f"Error getting daily sentiment for {currency} on {date}: {str(e)}")
+            logger.error(f"Error getting daily sentiment: {str(e)}")
             return {
-                'date': date,
-                'sentiment_mean': 0,
-                'sentiment_std': 0,
-                'subjectivity_mean': 0,
+                'sentiment_mean': 0.0,
+                'sentiment_std': 0.0,
+                'subjectivity_mean': 0.0,
                 'text_count': 0
             }
-    
-    def _scrape_reddit(self, currency: str, subreddit: str, date: datetime) -> List[str]:
-        """Scrape Reddit posts (using public RSS feeds)"""
-        texts = []
-        
+
+    def _get_cache_key(self, currency: str, date: datetime) -> str:
+        """إنشاء مفتاح التخزين المؤقت"""
+        return f"{currency}_{date.strftime('%Y-%m-%d')}"
+
+    def _get_from_cache(self, key: str) -> Optional[Dict]:
+        """استرجاع البيانات من التخزين المؤقت"""
+        return self.cache.get(key)
+
+    def _save_to_cache(self, key: str, data: Dict) -> None:
+        """حفظ البيانات في التخزين المؤقت"""
         try:
-            url = f"https://www.reddit.com/r/{subreddit}/search.rss"
+            self.cache.set(key, data, expires_in=3600)  # Cache for 1 hour
+        except Exception as e:
+            logger.error(f"Cache write error: {str(e)}")
+
+    def _scrape_reddit(self, subreddit: str, query: str, date: datetime) -> List[str]:
+        """جمع النصوص من Reddit"""
+        try:
+            url = f"https://www.reddit.com/r/{subreddit}/search.json"
             params = {
-                'q': currency,
-                't': 'day',
-                'restrict_sr': 'on'
+                'q': query,
+                'restrict_sr': 1,
+                'sort': 'new',
+                't': 'day'
             }
+            response = requests.get(
+                url, 
+                params=params,
+                headers={'User-Agent': 'Mozilla/5.0'}
+            )
+            response.raise_for_status()
             
-            response = requests.get(url, params=params, timeout=10)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'xml')
-                for entry in soup.find_all('entry'):
-                    title = entry.find('title')
-                    content = entry.find('content')
-                    if title and content:
-                        texts.append(f"{title.text} {content.text}")
+            data = response.json()
+            texts = []
             
+            for post in data.get('data', {}).get('children', []):
+                post_data = post.get('data', {})
+                title = post_data.get('title', '')
+                selftext = post_data.get('selftext', '')
+                
+                if len(title) > self.config['min_article_length']:
+                    texts.append(title)
+                if len(selftext) > self.config['min_article_length']:
+                    texts.append(selftext)
+                    
+                if len(texts) >= self.config['max_articles']:
+                    break
+                    
+            return texts
+        
         except Exception as e:
             logger.warning(f"Error scraping Reddit {subreddit}: {str(e)}")
-        
-        return texts
-    
-    def _scrape_news(self, currency: str, domain: str, date: datetime) -> List[str]:
-        """Scrape news articles"""
-        texts = []
-        
+            return []
+
+    def _scrape_news(self, currency: str, source: str, date: datetime) -> List[str]:
+        """جمع النصوص من مصادر الأخبار"""
         try:
-            url = f"https://{domain}/search"
-            params = {
-                'q': currency,
-                'date': date.strftime('%Y-%m-%d')
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Connection': 'keep-alive',
             }
             
-            response = requests.get(url, params=params, timeout=10)
-            if response.status_code == 200:
+            if source == 'cointelegraph.com':
+                url = f"https://{source}/tags/{currency}"
+            else:
+                url = f"https://{source}/search?q={currency}"
+                
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            try:
+                soup = BeautifulSoup(response.text, 'lxml')
+            except Exception:
+                # إذا فشل استخدام lxml، نستخدم html.parser كبديل
                 soup = BeautifulSoup(response.text, 'html.parser')
                 
-                articles = soup.find_all('article') or soup.find_all(class_=re.compile('article|post'))
-                
-                for article in articles:
-                    text = article.get_text(separator=' ', strip=True)
-                    text = re.sub(r'\s+', ' ', text)
-                    if text:
-                        texts.append(text)
-        
+            texts = []
+            
+            # البحث عن العناوين والمقالات
+            if source == 'cointelegraph.com':
+                articles = soup.find_all(['h1', 'h2', 'article'])
+            else:
+                articles = soup.find_all(['h1', 'h2', 'h3', 'p'])
+            
+            for article in articles:
+                text = article.get_text().strip()
+                if len(text) > self.config['min_article_length']:
+                    texts.append(text)
+                    
+                if len(texts) >= self.config['max_articles']:
+                    break
+                    
+            return texts
+            
         except Exception as e:
-            logger.warning(f"Error scraping {domain}: {str(e)}")
-        
-        return texts
+            logger.warning(f"Error scraping {source}: {str(e)}")
+            return []

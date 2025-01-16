@@ -4,7 +4,7 @@ Data validation module for Data Kitchen
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 from .logger import setup_logger
 from sklearn.preprocessing import RobustScaler
 import warnings
@@ -26,14 +26,14 @@ class DataValidator:
         self.config = config or {
             'nan_threshold': 0.1,  # Maximum allowed proportion of NaN values
             'duplicate_threshold': 0.01,  # Maximum allowed proportion of duplicates
-            'constant_threshold': 0.95,  # Minimum variance for non-constant columns
+            'constant_threshold': 0.05,  # Minimum unique ratio for non-constant columns
             'outlier_threshold': 3.0,  # Number of standard deviations for outlier detection
             'future_window': 0,  # Number of future periods to check for leakage
             'min_periods': 20,  # Minimum number of periods required
         }
         self.scaler = RobustScaler()
         
-    def validate_dataset(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
+    def validate_dataset(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
         """
         Validate entire dataset and return cleaned data with validation report
         
@@ -45,44 +45,42 @@ class DataValidator:
             - Cleaned DataFrame
             - Validation report dictionary
         """
+        if len(df) < self.config['min_periods']:
+            raise DataValidationError(f"Dataset too small: {len(df)} rows < {self.config['min_periods']} required")
+        
         report = {
             'original_shape': df.shape,
-            'issues': [],
-            'dropped_rows': 0,
             'dropped_columns': [],
-            'outliers_detected': {},
-            'future_leaks': [],
+            'outliers_detected': False
         }
         
         try:
-            # Check minimum size
-            if len(df) < self.config['min_periods']:
-                raise DataValidationError(f"Dataset too small: {len(df)} rows < {self.config['min_periods']} required")
-            
             # Handle missing values
-            df, nan_report = self._handle_missing_values(df)
-            report['issues'].extend(nan_report)
+            df, missing_issues = self._handle_missing_values(df)
+            report['dropped_columns'].extend([col for col in missing_issues if 'Removed column' in col])
             
-            # Remove duplicates
-            df, dup_report = self._handle_duplicates(df)
-            report['issues'].extend(dup_report)
+            # Handle duplicates
+            df, duplicate_issues = self._handle_duplicates(df)
             
-            # Check for constant columns
-            df, const_report = self._handle_constant_columns(df)
-            report['issues'].extend(const_report)
+            # Handle constant columns
+            df, constant_issues = self._handle_constant_columns(df)
+            report['dropped_columns'].extend([col.split(': ')[1].split(' ')[0] for col in constant_issues])
             
             # Detect and handle outliers
             df, outlier_report = self._handle_outliers(df)
-            report.update(outlier_report)
+            report['outliers_detected'] = bool(outlier_report['outliers_detected'])
             
             # Check for future data leaks
             future_leaks = self._check_future_leaks(df)
-            report['future_leaks'] = future_leaks
             
-            # Update final statistics
-            report['final_shape'] = df.shape
-            report['dropped_rows'] = report['original_shape'][0] - report['final_shape'][0]
-            
+            report.update({
+                'final_shape': df.shape,
+                'missing_data_issues': missing_issues,
+                'duplicate_issues': duplicate_issues,
+                'constant_column_issues': constant_issues,
+                'future_data_leaks': future_leaks
+            })
+        
         except Exception as e:
             logger.error(f"Validation error: {str(e)}")
             raise DataValidationError(f"Validation failed: {str(e)}")
@@ -104,9 +102,9 @@ class DataValidator:
                          for col, prop in high_missing.items()])
         
         # Forward fill remaining missing values
-        df = df.fillna(method='ffill')
+        df = df.ffill()
         # Backward fill any remaining NaNs at the start
-        df = df.fillna(method='bfill')
+        df = df.bfill()
         
         return df, issues
     
@@ -125,16 +123,18 @@ class DataValidator:
         return df, issues
     
     def _handle_constant_columns(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
-        """Identify and handle constant or near-constant columns"""
+        """Handle constant columns"""
         issues = []
+        constant_cols = []
         
-        # Calculate normalized variance for each column
-        variances = df.var() / df.mean()
-        low_var_cols = variances[variances < (1 - self.config['constant_threshold'])]
+        for col in df.columns:
+            unique_ratio = df[col].nunique() / len(df)
+            if unique_ratio < self.config['constant_threshold']:
+                constant_cols.append(col)
+                issues.append(f"Removed constant column: {col} (unique ratio: {unique_ratio:.2f})")
         
-        if not low_var_cols.empty:
-            df = df.drop(columns=low_var_cols.index)
-            issues.extend([f"Dropped near-constant column {col}" for col in low_var_cols.index])
+        if constant_cols:
+            df = df.drop(columns=constant_cols)
         
         return df, issues
     
@@ -178,3 +178,29 @@ class DataValidator:
                     future_leaks.append(f"Possible future leak in column: {col}")
         
         return future_leaks
+
+    def handle_missing_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """معالجة البيانات المفقودة"""
+        if df.empty:
+            logger.error("Error handling missing data: Cannot handle missing data on empty DataFrame")
+            return df
+
+        try:
+            # حساب نسبة القيم المفقودة لكل عمود
+            missing_ratio = df.isnull().sum() / len(df)
+            
+            # حذف الأعمدة التي تحتوي على نسبة عالية من القيم المفقودة
+            columns_to_drop = missing_ratio[missing_ratio > 0.5].index
+            if not columns_to_drop.empty:
+                logger.warning(f"Dropping columns with high missing value proportion: {columns_to_drop}")
+                df = df.drop(columns=columns_to_drop)
+            
+            # ملء القيم المفقودة المتبقية
+            df = df.ffill()  # Forward fill
+            df = df.bfill()  # Backward fill
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error handling missing data: {str(e)}")
+            return df

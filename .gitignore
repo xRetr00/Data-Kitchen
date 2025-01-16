@@ -2,6 +2,7 @@
 .env
 .windsurfrules
 logs/
+cache/
 logs/data_processor.log
 data/
 data/parquet/

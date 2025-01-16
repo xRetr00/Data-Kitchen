@@ -9,3 +9,4 @@ textblob>=0.17.1
 beautifulsoup4>=4.12.0
 requests>=2.31.0
 lxml>=4.9.0  # For XML parsing
+pytest-mock>=3.6.1
