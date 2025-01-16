@@ -23,6 +23,8 @@ from .config import (
     END_DATE,
     TIMEFRAME_CHUNKS
 )
+from .data_validator import DataValidator
+from .sentiment_analyzer import SentimentAnalyzer
 
 logger = setup_logger(__name__)
 
@@ -42,6 +44,8 @@ class DataProcessor:
             'enableRateLimit': True
         })
         self.data_storage = DataStorage(storage_dir)
+        self.validator = DataValidator()
+        self.sentiment_analyzer = SentimentAnalyzer()
         logger.info(f"Data Processor initialized")
     
     def fetch_data_generator(
@@ -106,12 +110,13 @@ class DataProcessor:
             raise
     
     @log_memory_usage
-    def process_chunk(self, df: pd.DataFrame) -> pd.DataFrame:
+    def process_chunk(self, df: pd.DataFrame, pair: str) -> pd.DataFrame:
         """
         Process a chunk of data
 
         Args:
             df: DataFrame with OHLCV data
+            pair: Trading pair
 
         Returns:
             pd.DataFrame: Processed data with technical indicators
@@ -121,8 +126,22 @@ class DataProcessor:
             numeric_columns = ['open', 'high', 'low', 'close', 'volume']
             df[numeric_columns] = df[numeric_columns].astype(float)
 
-            # Handle missing values
-            df = handle_missing_data(df)
+            # Validate and clean data
+            df, validation_report = self.validator.validate_dataset(df)
+            if validation_report['issues']:
+                logger.warning(f"Data validation issues: {validation_report['issues']}")
+            
+            # Add sentiment features if available
+            try:
+                sentiment_df = self.sentiment_analyzer.get_sentiment_features(
+                    pair,
+                    df.index[0],
+                    df.index[-1]
+                )
+                if not sentiment_df.empty:
+                    df = df.join(sentiment_df)
+            except Exception as e:
+                logger.warning(f"Error adding sentiment features: {str(e)}")
             
             # Calculate technical indicators
             df = calculate_technical_indicators(df, TECHNICAL_INDICATORS)
@@ -131,7 +150,7 @@ class DataProcessor:
             feature_columns = [col for col in df.columns if col not in ['timestamp']]
             df = normalize_features(df, feature_columns)
             
-            return optimize_dataframe(df)
+            return df
             
         except Exception as e:
             logger.error(f"Error processing chunk: {str(e)}")
@@ -161,7 +180,7 @@ class DataProcessor:
             
             # Process data in chunks
             for chunk in self.fetch_data_generator(pair, timeframe):
-                processed_chunk = self.process_chunk(chunk)
+                processed_chunk = self.process_chunk(chunk, pair)
                 all_data.append(processed_chunk)
                 chunk_count += 1
                 
