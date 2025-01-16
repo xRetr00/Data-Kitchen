@@ -1,8 +1,8 @@
-# Data Kitchen
+# Data Kitchen 🍳
 
 A professional and efficient data processing system designed for high-performance financial data processing, optimized for machine learning applications and real-time trading.
 
-## Key Features
+## Key Features 🌟
 
 - **Real-time Data Processing**: Collect and process live data from Binance
 - **Multi-Asset Support**: Handle multiple trading pairs simultaneously
@@ -11,8 +11,10 @@ A professional and efficient data processing system designed for high-performanc
 - **Efficient Storage**: Optimized Parquet format with chunked processing
 - **Memory Management**: Efficient handling of large datasets
 - **Comprehensive Logging**: Detailed operation tracking and error reporting
+- **Improved Caching**: Smart caching with automatic cleaning
+- **Parallel Processing**: CPU and I/O dependent task parallelization
 
-## Project Structure
+## Project Structure 🏗️
 
 ```
 /data_processor/
@@ -22,10 +24,12 @@ A professional and efficient data processing system designed for high-performanc
 ├──  config.py      # Configuration settings
 ├──  data_utils.py  # Data handling utilities
 ├── data_storage.py # Data storage management
+├── sentiment_analyzer.py # Sentiment analysis
+├── data_validator.py # Data validation
 └──  /logs/         # Log files directory
 ```
 
-## Requirements
+## Requirements 📋
 
 ```
 pandas>=1.5.0
@@ -34,9 +38,14 @@ ccxt>=2.0.0
 ta-lib>=0.4.0  # Requires ta-lib source installation
 scikit-learn>=1.0.0
 pytest>=7.0.0
+pytest-cov>=4.0.0
+textblob>=0.17.1
+beautifulsoup4>=4.12.0
+requests>=2.31.0
+lxml>=4.9.0
 ```
 
-## Installation
+## Installation 💻
 
 1. Clone the repository:
 ```bash
@@ -49,15 +58,7 @@ cd data-kitchen
 pip install -r requirements.txt
 ```
 
-3. Configure settings:
-Edit `config.py` to set:
-- API credentials
-- Trading pairs
-- Timeframes
-- Technical indicators
-- Processing parameters
-
-## Usage
+## Usage 🚀
 
 ### Basic Data Processing
 
@@ -82,6 +83,18 @@ processor.process_all_pairs()
 ```python
 # Start real-time processing
 processor.process_all_pairs(is_live=True)
+```
+
+### Sentiment Analysis
+
+```python
+from data_processor.sentiment_analyzer import SentimentAnalyzer
+
+# Initialize analyzer
+analyzer = SentimentAnalyzer()
+
+# Get sentiment features
+sentiment_data = analyzer.get_sentiment_features('BTC/USDT', start_date, end_date)
 ```
 
 ### Data Storage
@@ -160,6 +173,10 @@ MIT License - see LICENSE file for details
 - [numpy](https://numpy.org/)
 - [pytest](https://pytest.org/)
 - [pytest-cov](https://pytest-cov.readthedocs.io/en/latest/)
+- [textblob](https://textblob.readthedocs.io/en/dev/)
+- [beautifulsoup4](https://www.crummy.com/software/BeautifulSoup/bs4/doc/)
+- [requests](https://requests.readthedocs.io/en/master/)
+- [lxml](https://lxml.de/)
 
 ## Author
 
