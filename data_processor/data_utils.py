@@ -1,13 +1,14 @@
 """
 Helper functions for data processing
 """
-
+import sys
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Any, Tuple
 import talib
 from sklearn.preprocessing import MinMaxScaler
 from .logger import setup_logger
+from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn, Console
 
 logger = setup_logger(__name__)
 
@@ -15,113 +16,65 @@ class IndicatorValidationError(Exception):
     """Custom exception for indicator validation errors"""
     pass
 
-def validate_input_data(data: np.ndarray, indicator_name: str) -> None:
-    """
-    Validate input data
-
-    Args:
-        data: Input data array
-        indicator_name: Indicator name
-
-    Raises:
-        IndicatorValidationError: If the input data is invalid
-    """
-    if data is None or len(data) == 0:
-        raise IndicatorValidationError("The data is empty")
-
-    try:
-        # Convert data to numeric if it's not already
-        numeric_data = np.asarray(data, dtype=np.float64)
-        
-        if np.any(np.isnan(numeric_data)):
-            raise IndicatorValidationError("The data contains NaN values")
-            
-    except (ValueError, TypeError):
-        raise IndicatorValidationError("The data must be numeric")
-
-def validate_rsi(rsi_values: np.ndarray) -> Tuple[bool, str]:
-    """
-    Validate RSI values
-    
-    Args:
-        rsi_values: RSI values array
-        
-    Returns:
-        Tuple[bool, str]: Validation result and error message
-    """
-    if np.any(np.isnan(rsi_values)):
-        return False, "RSI values contain NaN"
-    
-    if np.any((rsi_values < 0) | (rsi_values > 100)):
-        return False, "RSI values are out of range (0-100)"
-    
+def validate_input_data(data: np.ndarray, indicator: str) -> Tuple[bool, str]:
+    """Validate input data"""
+    if np.any(np.isnan(data)):
+        logger.warning(f"Input data for {indicator} contains NaN values")
+        return False, f"Input data for {indicator} contains NaN values"
+    if np.any(np.isinf(data)):
+        logger.warning(f"Input data for {indicator} contains infinite values")
+        return False, f"Input data for {indicator} contains infinite values"
+    if len(data) < 2:
+        logger.warning(f"Not enough data points for {indicator}")
+        return False, f"Not enough data points for {indicator}"
     return True, ""
 
-def validate_macd(macd_values: np.ndarray, signal_values: np.ndarray) -> Tuple[bool, str]:
-    """
-    Validate MACD values
-    
-    Args:
-        macd_values: MACD values array
-        signal_values: MACD signal values array
-        
-    Returns:
-        Tuple[bool, str]: Validation result and error message
-    """
-    if np.any(np.isnan(macd_values)) or np.any(np.isnan(signal_values)):
-        return False, "MACD values contain NaN"
-    
-    if np.any(np.isinf(macd_values)) or np.any(np.isinf(signal_values)):
-        return False, "MACD values contain infinite values"
-    
-    return True, ""
 
-def validate_sma(sma_values: np.ndarray, window: int, data_length: int) -> Tuple[bool, str]:
-    """
-    Validate SMA values
-    
-    Args:
-        sma_values: SMA values array
-        window: SMA window size
-        data_length: Input data length
-        
-    Returns:
-        Tuple[bool, str]: Validation result and error message
-    """
-    expected_nan_count = min(window - 1, data_length)
-    actual_nan_count = np.isnan(sma_values).sum()
-    
-    if actual_nan_count > expected_nan_count:
-        return False, f"Number of NaN values in SMA ({actual_nan_count}) is greater than expected ({expected_nan_count})"
-    
-    if np.any(np.isinf(sma_values)):
-        return False, "SMA values contain infinite values"
-    
-    return True, ""
 
 def calculate_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     """
     Calculate RSI
     
     Args:
-        df: DataFrame with price data
-        period: RSI period
+        df (pd.DataFrame): DataFrame with price data
+        period (int): RSI period
         
     Returns:
         pd.DataFrame: DataFrame with calculated RSI values
     """
     try:
-        delta = df['close'].diff().dropna()
-        up, down = delta.copy(), delta.copy()
-        up[up < 0] = 0
-        down[down > 0] = 0
-        roll_up1 = up.ewm(com=period - 1, adjust=False).mean()
-        roll_down1 = down.ewm(com=period - 1, adjust=False).mean().abs()
-        RS = roll_up1 / roll_down1
-        RSI = 100.0 - (100.0 / (1.0 + RS))
-        df[f'RSI_{period}'] = RSI
+        # Copy the data to avoid modifying the original
+        df_copy = df.copy()
+        
+        # Reorder the index to avoid repetition
+        df_copy = df_copy.reset_index(drop=True)
+        
+        # Calculate the price change
+        delta = df_copy['close'].diff()
+        
+        # Separate the gains and losses
+        gain = delta.where(delta > 0, 0)
+        loss = -delta.where(delta < 0, 0)
+        
+        # Calculate the exponential moving average
+        avg_gain = gain.ewm(com=period-1, adjust=True).mean()  # Change adjust to True
+        avg_loss = loss.ewm(com=period-1, adjust=True).mean()
+        
+        # Avoid division by zero
+        avg_loss = avg_loss.replace(0, np.nan)
+        
+        # Calculate RSI
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+
+        # Fill the missing values at the beginning
+        rsi[:period] = np.nan
+
+        # Add RSI to the original data
+        df[f'RSI_{period}'] = rsi
+        
         return df
-    
+        
     except Exception as e:
         logger.error(f"Error calculating RSI: {str(e)}")
         return df
@@ -185,147 +138,256 @@ def calculate_ema(df: pd.DataFrame, window: int) -> pd.DataFrame:
         return df
 
 def calculate_technical_indicators(df: pd.DataFrame, indicators_config: dict) -> pd.DataFrame:
-    """
-    Calculate technical indicators
-    
-    Args:
-        df: DataFrame with price data
-        indicators_config: Technical indicators configuration
+    """Calculate technical indicators with error handling"""
+    if df.empty:
+        logger.warning("Empty DataFrame provided")
+        return df
+
+    console = Console(file=sys.stderr)
+    progress = Progress(
+        SpinnerColumn(),
+        *Progress.get_default_columns(),
+        TimeElapsedColumn(),
+        console=console
+    )
         
-    Returns:
-        DataFrame with calculated technical indicators
-    """
     try:
-        # Validate DataFrame structure
-        required_columns = ['close']
-        missing_columns = [col for col in required_columns if col not in df.columns]
-        if missing_columns:
-            raise ValueError(f"Required columns missing: {missing_columns}")
-            
-        if df.empty:
-            raise ValueError("Cannot calculate technical indicators on empty data")
-            
-        logger.debug(f"Starting technical indicators calculation with config: {indicators_config}")
         result_df = df.copy()
+        with progress:
+            task = progress.add_task("[cyan]Calculating indicators...", total=len(indicators_config))
         
         for indicator, params in indicators_config.items():
-            logger.debug(f"Calculating {indicator} with parameters: {params}")
-            
+            logger.info(f"Calculating {indicator}...")
             try:
+                # Validate input data
+                validate_input_data(df['close'].values, indicator)
+                
                 if indicator == 'RSI':
-                    validate_input_data(df['close'].values, 'RSI')
-                    result_df[f'RSI_{params["period"]}'] = talib.RSI(df['close'].values, timeperiod=params['period'])
-                    
+                    result_df = calculate_rsi(result_df, params.get('period', 14))
+                    # Validate RSI
+                    is_valid, error_msg = validate_rsi(result_df[f'RSI_{params.get("period", 14)}'].values)
+                    if not is_valid:
+                        logger.error(f"RSI validation failed: {error_msg}")
+                        result_df.drop(columns=[f'RSI_{params.get("period", 14)}'], inplace=True)
+                        
                 elif indicator == 'MACD':
-                    validate_input_data(df['close'].values, 'MACD')
-                    macd, signal, _ = talib.MACD(
-                        df['close'].values,
-                        fastperiod=params['fast_period'],
-                        slowperiod=params['slow_period'],
-                        signalperiod=params['signal_period']
+                    result_df = calculate_macd(result_df, 
+                        params.get('fast_period', 12),
+                        params.get('slow_period', 26),
+                        params.get('signal_period', 9)
                     )
-                    result_df[f'MACD_{params["fast_period"]}_{params["slow_period"]}_{params["signal_period"]}'] = macd
-                    result_df[f'MACD_Signal_{params["fast_period"]}_{params["slow_period"]}_{params["signal_period"]}'] = signal
-                    
+                    # Validate MACD
+                    macd_col = f'MACD_{params.get("fast_period", 12)}_{params.get("slow_period", 26)}_{params.get("signal_period", 9)}'
+                    signal_col = f'MACD_Signal_{params.get("fast_period", 12)}_{params.get("slow_period", 26)}_{params.get("signal_period", 9)}'
+                    is_valid, error_msg = validate_macd(result_df[macd_col].values, result_df[signal_col].values)
+                    if not is_valid:
+                        logger.error(f"MACD validation failed: {error_msg}")
+                        result_df.drop(columns=[macd_col, signal_col], inplace=True)
+                        
                 elif indicator == 'SMA':
-                    for period in params['periods']:
-                        validate_input_data(df['close'].values, f'SMA_{period}')
-                        result_df[f'SMA_{period}'] = talib.SMA(df['close'].values, timeperiod=period)
+                    result_df = calculate_sma(result_df, params.get('window', 20))
+                    # Validate SMA
+                    is_valid, error_msg = validate_sma(
+                        result_df[f'SMA_{params.get("window", 20)}'].values,
+                        params.get('window', 20),
+                        len(df)
+                    )
+                    if not is_valid:
+                        logger.error(f"SMA validation failed: {error_msg}")
+                        result_df.drop(columns=[f'SMA_{params.get("window", 20)}'], inplace=True)
                         
                 elif indicator == 'EMA':
-                    for period in params['periods']:
-                        validate_input_data(df['close'].values, f'EMA_{period}')
-                        result_df[f'EMA_{period}'] = talib.EMA(df['close'].values, timeperiod=period)
-                
-                logger.debug(f"Successfully calculated {indicator}")
+                    result_df = calculate_ema(result_df, params.get('window', 20))
+                    # Validate EMA
+                    ema_values = result_df[f'EMA_{params.get("window", 20)}'].values
+                    if np.any(np.isnan(ema_values)) or np.any(np.isinf(ema_values)):
+                        logger.error("EMA validation failed: contains NaN or infinite values")
+                        result_df.drop(columns=[f'EMA_{params.get("window", 20)}'], inplace=True)
+                    
+                progress.update(task, advance=1)
                 
             except Exception as e:
                 logger.error(f"Error calculating {indicator}: {str(e)}")
-                raise
-        
-        logger.debug("Technical indicators calculation completed successfully")
+                continue
+                
         return result_df
         
     except Exception as e:
-        logger.error(f"Error calculating technical indicators: {str(e)}")
-        raise
+        logger.error(f"Error in calculate_technical_indicators: {str(e)}")
+        return df
+
+def handle_missing_data(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Handle missing data in DataFrame
+    
+    Args:
+        df: DataFrame with possibly missing values
+        
+    Returns:
+        DataFrame with handled missing values
+    """
+    try:
+        # Make a copy to avoid modifying original
+        logger.info("Starting missing data handling")
+        result_df = df.copy()
+        
+        with Progress(
+            SpinnerColumn(),
+            *Progress.get_default_columns(),
+            TimeElapsedColumn(),
+            console=Console()
+        ) as progress:
+            total_steps = 4
+            task = progress.add_task("[cyan]Handling missing data...", total=total_steps)
+            
+            # Forward fill missing values
+            result_df = result_df.ffill()
+            logger.debug("Completed forward fill")
+            progress.update(task, advance=1, description="[cyan]Forward filling...")
+            
+            # If still have missing values at the start, backward fill
+            result_df = result_df.bfill()
+            logger.debug("Completed backward fill")
+            progress.update(task, advance=1, description="[cyan]Backward filling...")
+            
+            # Drop rows where all indicator columns are NaN
+            indicator_cols = [col for col in result_df.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
+            if indicator_cols:
+                result_df = result_df.dropna(subset=indicator_cols, how='all')
+                logger.debug("Completed dropping empty rows")
+                progress.update(task, advance=1, description="[cyan]Dropping empty rows...")
+            else:
+                logger.info("Successfully handled all missing values")
+            
+            # Log missing data info
+            missing_count = result_df.isnull().sum()
+            if missing_count.any():
+                logger.warning(f"Missing values after handling:\n{missing_count[missing_count > 0]}")
+            progress.update(task, advance=1, description="[cyan]Checking remaining missing values...")
+            
+            return result_df
+            
+    except Exception as e:
+        logger.error(f"Error handling missing data: {str(e)}")
+        return df
+
 
 def normalize_features(df: pd.DataFrame, feature_columns: List[str]) -> pd.DataFrame:
     """
-    Normalize feature values
+    Normalize features using MinMaxScaler
     
     Args:
-        df: Input data frame
-        feature_columns: List of feature columns to normalize
+        df: Input DataFrame
+        feature_columns: List of columns to normalize
         
     Returns:
-        pd.DataFrame: Data frame with normalized feature values
+        DataFrame with normalized features
     """
     try:
-        # Validate input
-        if df.empty:
-            raise ValueError("Cannot normalize empty data")
-            
-        missing_columns = [col for col in feature_columns if col not in df.columns]
-        if missing_columns:
-            raise ValueError(f"Required columns for normalization missing: {missing_columns}")
-            
-        logger.debug(f"Starting normalization for columns: {feature_columns}")
-        df = df.copy()
+        # Create a copy to avoid modifying the original
+        df_norm = df.copy()
+        
+        # Initialize scaler
         scaler = MinMaxScaler()
         
-        df[feature_columns] = scaler.fit_transform(df[feature_columns])
-        df[feature_columns] = df[feature_columns].clip(0, 1)
+        # Normalize each feature
+        for col in feature_columns:
+            # Skip if column has all NaN values
+            if df_norm[col].isnull().all():
+                logger.warning(f"Skipping normalization for {col}: all values are NaN")
+                continue
+                
+            # Fill NaN with median for normalization
+            temp_col = df_norm[col].fillna(df_norm[col].median())
+            
+            # Reshape for scaler
+            values = temp_col.values.reshape(-1, 1)
+            
+            # Normalize
+            try:
+                normalized = scaler.fit_transform(values)
+                df_norm[col] = normalized.flatten()
+            except Exception as e:
+                logger.error(f"Error normalizing {col}: {str(e)}")
+                continue
+                
+        # Log success
+        logger.info(f"Successfully normalized {len(feature_columns)} features")
         
-        logger.debug(f"Normalization completed successfully. Data range: {df[feature_columns].min().to_dict()} to {df[feature_columns].max().to_dict()}")
-        return df
-    
+        return df_norm
+        
     except Exception as e:
         logger.error(f"Error normalizing features: {str(e)}")
         raise
 
-def handle_missing_data(df: pd.DataFrame, threshold: float = 0.1) -> pd.DataFrame:
+
+def validate_rsi(rsi_values: np.ndarray) -> Tuple[bool, str]:
     """
-    Handle missing data
+    Validate RSI values
     
     Args:
-        df: Input data frame
-        threshold: Maximum allowed proportion of missing values
+        rsi_values: numpy array of RSI values
         
     Returns:
-        pd.DataFrame: Data frame with handled missing data
-        
-    Raises:
-        ValueError: If input DataFrame is empty
+        (is_valid, error_message)
     """
     try:
-        if df.empty:
-            raise ValueError("Cannot handle missing data on empty DataFrame")
+        # Allow up to 10% NaN values at the beginning
+        if np.isnan(rsi_values).sum() > len(rsi_values) * 0.1:
+            return False, "RSI contains too many NaN values"
             
-        logger.debug(f"Starting missing data handling. Input shape: {df.shape}")
+        # Check non-NaN values only
+        valid_values = rsi_values[~np.isnan(rsi_values)]
+        if np.any((valid_values < 0) | (valid_values > 100)):
+            return False, "RSI values outside valid range [0, 100]"
+            
+        return True, ""
         
-        # Calculate missing value proportions
-        missing_proportions = df.isnull().mean()
-        missing_columns = missing_proportions[missing_proportions > 0].index.tolist()
-        
-        if missing_columns:
-            logger.debug(f"Detected missing values in columns: {missing_columns}")
-            logger.debug(f"Missing proportions: {missing_proportions[missing_columns].to_dict()}")
-        
-        # Drop columns with too many missing values
-        columns_to_drop = missing_proportions[missing_proportions > threshold].index
-        if len(columns_to_drop) > 0:
-            logger.warning(f"Dropping columns with high missing value proportion: {columns_to_drop}")
-            df = df.drop(columns=columns_to_drop)
-        
-        # Forward fill then backward fill missing values
-        df = df.ffill().bfill()
-        
-        logger.debug(f"Missing data handling completed. Output shape: {df.shape}")
-        logger.debug(f"Remaining missing values: {df.isnull().sum().to_dict()}")
-        
-        return df
-    
     except Exception as e:
-        logger.error(f"Error handling missing data: {str(e)}")
-        raise
+        return False, str(e)
+
+
+def validate_macd(macd_values: np.ndarray, signal_values: np.ndarray) -> Tuple[bool, str]:
+    """
+    Validate MACD values
+    
+    Args:
+        macd_values: MACD values array
+        signal_values: MACD signal values array
+        
+    Returns:
+        Tuple[bool, str]: Validation result and error message
+    """
+    if np.any(np.isnan(macd_values)) or np.any(np.isnan(signal_values)):
+        return False, "MACD or Signal contains NaN values"
+    
+    if np.any(np.isinf(macd_values)) or np.any(np.isinf(signal_values)):
+        return False, "MACD or Signal contains infinite values"
+    
+    return True, ""
+
+def validate_sma(sma_values: np.ndarray, window: int, data_length: int) -> Tuple[bool, str]:
+    """
+    Validate SMA values
+    
+    Args:
+        sma_values: SMA values array
+        window: SMA window size
+        data_length: Input data length
+        
+    Returns:
+        Tuple[bool, str]: Validation result and error message
+    """
+    expected_nan_count = min(window - 1, data_length)
+    actual_nan_count = np.isnan(sma_values).sum()
+    
+    if actual_nan_count > expected_nan_count:
+        return False, f"SMA contains NaN values"
+    
+    if np.any(np.isinf(sma_values)):
+        return False, "SMA contains infinite values"
+
+    if window > data_length:
+        return False, f"Window size ({window}) larger than data length ({data_length})"
+
+    return True, ""

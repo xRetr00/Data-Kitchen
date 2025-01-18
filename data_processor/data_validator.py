@@ -1,206 +1,300 @@
 """
-Data validation module for Data Kitchen
+Data Validator Module
 """
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Tuple, Optional
 from .logger import setup_logger
-from sklearn.preprocessing import RobustScaler
-import warnings
 
 logger = setup_logger(__name__)
 
-class DataValidationError(Exception):
-    """Custom exception for data validation errors"""
-    pass
-
 class DataValidator:
-    def __init__(self, config: Optional[Dict] = None):
+    """Class for validating and cleaning data"""
+    
+    def __init__(self, missing_threshold: float = 0.35, min_data_points: int = 50):
         """
         Initialize DataValidator
         
         Args:
-            config: Configuration dictionary with validation parameters
+            missing_threshold: Maximum allowed ratio of missing data (default: 0.35)
+            min_data_points: Minimum number of data points required (default: 50)
         """
-        self.config = config or {
-            'nan_threshold': 0.1,  # Maximum allowed proportion of NaN values
-            'duplicate_threshold': 0.01,  # Maximum allowed proportion of duplicates
-            'constant_threshold': 0.05,  # Minimum unique ratio for non-constant columns
-            'outlier_threshold': 3.0,  # Number of standard deviations for outlier detection
-            'future_window': 0,  # Number of future periods to check for leakage
-            'min_periods': 20,  # Minimum number of periods required
-        }
-        self.scaler = RobustScaler()
-        
-    def validate_dataset(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        self.missing_threshold = missing_threshold
+        self.min_data_points = min_data_points
+        logger.info(f"Data Validator initialized with missing_threshold={missing_threshold}, min_data_points={min_data_points}")
+    
+    def validate_data(self, df: pd.DataFrame) -> Tuple[bool, str]:
         """
-        Validate entire dataset and return cleaned data with validation report
+        Validate data quality
         
         Args:
-            df: Input DataFrame
+            df: DataFrame to validate
             
         Returns:
-            Tuple containing:
-            - Cleaned DataFrame
-            - Validation report dictionary
+            Tuple[bool, str]: (is_valid, message)
         """
-        if len(df) < self.config['min_periods']:
-            raise DataValidationError(f"Dataset too small: {len(df)} rows < {self.config['min_periods']} required")
-        
-        report = {
-            'original_shape': df.shape,
-            'dropped_columns': [],
-            'outliers_detected': False
-        }
-        
         try:
-            # Handle missing values
-            df, missing_issues = self._handle_missing_values(df)
-            report['dropped_columns'].extend([col for col in missing_issues if 'Removed column' in col])
-            
-            # Handle duplicates
-            df, duplicate_issues = self._handle_duplicates(df)
-            
-            # Handle constant columns
-            df, constant_issues = self._handle_constant_columns(df)
-            report['dropped_columns'].extend([col.split(': ')[1].split(' ')[0] for col in constant_issues])
-            
-            # Detect and handle outliers
-            df, outlier_report = self._handle_outliers(df)
-            report['outliers_detected'] = bool(outlier_report['outliers_detected'])
-            
-            # Check for future data leaks
-            future_leaks = self._check_future_leaks(df)
-            
-            report.update({
-                'final_shape': df.shape,
-                'missing_data_issues': missing_issues,
-                'duplicate_issues': duplicate_issues,
-                'constant_column_issues': constant_issues,
-                'future_data_leaks': future_leaks
-            })
-        
-        except Exception as e:
-            logger.error(f"Validation error: {str(e)}")
-            raise DataValidationError(f"Validation failed: {str(e)}")
-        
-        return df, report
-    
-    def _handle_missing_values(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
-        """Handle missing values in the dataset"""
-        issues = []
-        
-        # Calculate missing value proportions
-        missing_props = df.isnull().mean()
-        high_missing = missing_props[missing_props > self.config['nan_threshold']]
-        
-        if not high_missing.empty:
-            # Drop columns with too many missing values
-            df = df.drop(columns=high_missing.index)
-            issues.extend([f"Dropped column {col} ({prop:.2%} missing)" 
-                         for col, prop in high_missing.items()])
-        
-        # Forward fill remaining missing values
-        df = df.ffill()
-        # Backward fill any remaining NaNs at the start
-        df = df.bfill()
-        
-        return df, issues
-    
-    def _handle_duplicates(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
-        """Handle duplicate rows in the dataset"""
-        issues = []
-        
-        # Check for duplicates
-        dup_prop = df.duplicated().mean()
-        if dup_prop > self.config['duplicate_threshold']:
-            original_len = len(df)
-            df = df.drop_duplicates()
-            dropped = original_len - len(df)
-            issues.append(f"Removed {dropped} duplicate rows ({dup_prop:.2%} of data)")
-        
-        return df, issues
-    
-    def _handle_constant_columns(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
-        """Handle constant columns"""
-        issues = []
-        constant_cols = []
-        
-        for col in df.columns:
-            unique_ratio = df[col].nunique() / len(df)
-            if unique_ratio < self.config['constant_threshold']:
-                constant_cols.append(col)
-                issues.append(f"Removed constant column: {col} (unique ratio: {unique_ratio:.2f})")
-        
-        if constant_cols:
-            df = df.drop(columns=constant_cols)
-        
-        return df, issues
-    
-    def _handle_outliers(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
-        """Detect and handle outliers using robust scaling"""
-        report = {'outliers_detected': {}}
-        
-        numeric_cols = df.select_dtypes(include=[np.number]).columns
-        
-        for col in numeric_cols:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                scaled_data = self.scaler.fit_transform(df[[col]])
-            
-            # Detect outliers
-            outliers = np.abs(scaled_data) > self.config['outlier_threshold']
-            n_outliers = outliers.sum()
-            
-            if n_outliers > 0:
-                report['outliers_detected'][col] = int(n_outliers)
-                # Cap outliers at threshold value
-                df.loc[outliers.ravel(), col] = df[col].mean() + (
-                    df[col].std() * self.config['outlier_threshold'] * 
-                    np.sign(scaled_data[outliers])
-                )
-        
-        return df, report
-    
-    def _check_future_leaks(self, df: pd.DataFrame) -> List[str]:
-        """Check for potential future data leaks"""
-        future_leaks = []
-        
-        if self.config['future_window'] > 0:
-            # Check for shifted values
-            for col in df.columns:
-                if any(col.startswith(prefix) for prefix in ['future_', 'next_', 'forward_']):
-                    future_leaks.append(f"Column name suggests future data: {col}")
+            # Check for minimum sequence length
+            if len(df) < self.min_data_points:
+                return False, "Sequence too short"
                 
-                # Check for forward-looking calculations
-                if df[col].shift(-self.config['future_window']).corr(df[col]) > 0.95:
-                    future_leaks.append(f"Possible future leak in column: {col}")
-        
-        return future_leaks
-
-    def handle_missing_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """معالجة البيانات المفقودة"""
-        if df.empty:
-            logger.error("Error handling missing data: Cannot handle missing data on empty DataFrame")
-            return df
-
-        try:
-            # حساب نسبة القيم المفقودة لكل عمود
+            # Check for missing values
             missing_ratio = df.isnull().sum() / len(df)
-            
-            # حذف الأعمدة التي تحتوي على نسبة عالية من القيم المفقودة
-            columns_to_drop = missing_ratio[missing_ratio > 0.5].index
-            if not columns_to_drop.empty:
-                logger.warning(f"Dropping columns with high missing value proportion: {columns_to_drop}")
-                df = df.drop(columns=columns_to_drop)
-            
-            # ملء القيم المفقودة المتبقية
-            df = df.ffill()  # Forward fill
-            df = df.bfill()  # Backward fill
-            
-            return df
+            if missing_ratio.max() > self.missing_threshold:
+                return False, f"Too many missing values: {missing_ratio.max():.2%}"
+                
+            # Check for variance
+            for col in df.columns:
+                if col != 'timestamp':
+                    variance = df[col].var()
+                    if variance < 1e-10:
+                        return False, f"Low variance in {col}: {variance}"
+                        
+            # Check for data consistency
+            if not self._check_data_consistency(df):
+                return False, "Data consistency check failed"
+                
+            return True, "Data validation passed"
             
         except Exception as e:
-            logger.error(f"Error handling missing data: {str(e)}")
+            return False, f"Validation error: {str(e)}"
+            
+    def _check_data_consistency(self, df: pd.DataFrame) -> bool:
+        """
+        Check data consistency
+        
+        Args:
+            df: DataFrame to check
+            
+        Returns:
+            bool: True if data is consistent
+        """
+        try:
+            # Price consistency checks with tolerance
+            tolerance = 1e-6
+            
+            price_issues = (
+                (df['high'] < df['low'] - tolerance) |
+                (df['close'] < df['low'] - tolerance) |
+                (df['close'] > df['high'] + tolerance) |
+                (df['open'] < df['low'] - tolerance) |
+                (df['open'] > df['high'] + tolerance)
+            )
+            
+            # Allow a small percentage of inconsistencies
+            max_inconsistencies = len(df) * 0.02  # 2% tolerance
+            if price_issues.sum() > max_inconsistencies:
+                return False
+                
+            return True
+            
+        except Exception:
+            return False
+    
+    def handle_missing_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Handle missing data in dataframe
+        
+        Args:
+            df: Input dataframe
+            
+        Returns:
+            Cleaned dataframe
+        """
+        if df is None or df.empty:
             return df
+            
+        # Forward fill missing values
+        df = df.fillna(method='ffill')
+        
+        # Backward fill any remaining missing values at the start
+        df = df.fillna(method='bfill')
+        
+        # Drop rows if still have missing values
+        df = df.dropna()
+        
+        logger.info(f"Handled missing data. Rows remaining: {len(df)}")
+        return df
+    
+    def check_data_quality(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Check and improve data quality
+        
+        Args:
+            df: Input dataframe
+            
+        Returns:
+            Cleaned dataframe
+        """
+        if df is None or df.empty:
+            return df
+            
+        # Remove duplicates
+        df = df.drop_duplicates()
+        
+        # Sort by timestamp
+        df = df.sort_values('timestamp')
+        
+        # Remove rows with negative values in price and volume
+        numeric_columns = ['open', 'high', 'low', 'close', 'volume']
+        df = df[df[numeric_columns] >= 0].copy()
+        
+        # Ensure high >= low
+        df = df[df['high'] >= df['low']].copy()
+        
+        # Ensure high >= open and close
+        df = df[
+            (df['high'] >= df['open']) & 
+            (df['high'] >= df['close'])
+        ].copy()
+        
+        # Ensure low <= open and close
+        df = df[
+            (df['low'] <= df['open']) & 
+            (df['low'] <= df['close'])
+        ].copy()
+        
+        logger.info(f"Checked data quality. Rows remaining: {len(df)}")
+        return df
+
+    def validate_data_quality(self, df: pd.DataFrame, config: dict) -> Tuple[bool, str]:
+        """التحقق من جودة البيانات"""
+        try:
+            # التحقق من البيانات المفقودة
+            missing_threshold = config.get('missing_data_threshold', 0.15)  # تخفيض النسبة من 35% إلى 15%
+            missing_percentages = df.isnull().mean()
+            
+            columns_over_threshold = missing_percentages[missing_percentages > missing_threshold]
+            if not columns_over_threshold.empty:
+                return False, f"Columns exceeding missing data threshold ({missing_threshold*100}%): {columns_over_threshold.to_dict()}"
+                
+            # التحقق من التباين
+            variance_threshold = config.get('variance_threshold', 1e-6)
+            variances = df.select_dtypes(include=[np.number]).var()
+            low_variance_cols = variances[variances < variance_threshold]
+            
+            if not low_variance_cols.empty:
+                return False, f"Columns with low variance (< {variance_threshold}): {low_variance_cols.to_dict()}"
+                
+            # التحقق من القيم المتطرفة
+            z_score_threshold = config.get('z_score_threshold', 3.0)
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            
+            outliers_info = {}
+            for col in numeric_cols:
+                z_scores = np.abs((df[col] - df[col].mean()) / df[col].std())
+                outliers = (z_scores > z_score_threshold).sum()
+                if outliers > 0:
+                    outliers_info[col] = outliers
+                    
+            if outliers_info:
+                logger.warning(f"Found outliers: {outliers_info}")
+                
+            return True, "Data validation passed"
+            
+        except Exception as e:
+            return False, f"Error in data validation: {str(e)}"
+
+    def validate_data_consistency(self, df: pd.DataFrame) -> Tuple[bool, str]:
+        """التحقق من اتساق البيانات"""
+        try:
+            # التحقق من القيم السالبة في الأعمدة التي يجب أن تكون موجبة
+            positive_columns = ['volume', 'open', 'high', 'low', 'close']
+            for col in positive_columns:
+                if col in df.columns and (df[col] <= 0).any():
+                    return False, f"Found non-positive values in {col}"
+                    
+            # التحقق من العلاقات المنطقية
+            if all(col in df.columns for col in ['open', 'high', 'low', 'close']):
+                if not (df['high'] >= df['low']).all():
+                    return False, "High values must be greater than or equal to Low values"
+                    
+                if not ((df['high'] >= df['open']) & (df['high'] >= df['close'])).all():
+                    return False, "High values must be the highest"
+                    
+                if not ((df['low'] <= df['open']) & (df['low'] <= df['close'])).all():
+                    return False, "Low values must be the lowest"
+                    
+            return True, "Data consistency validation passed"
+            
+        except Exception as e:
+            return False, f"Error in consistency validation: {str(e)}"
+
+    def validate_timestamps(self, df: pd.DataFrame, timeframe: str) -> Tuple[bool, str]:
+        """التحقق من اتساق التواريخ"""
+        try:
+            if 'timestamp' not in df.columns:
+                return False, "Timestamp column not found"
+                
+            # التأكد من أن التواريخ مرتبة تصاعدياً
+            if not df['timestamp'].is_monotonic_increasing:
+                return False, "Timestamps are not monotonically increasing"
+                
+            # التحقق من الفجوات في التواريخ
+            time_diff = pd.Timedelta(timeframe)
+            expected_diff = pd.Timedelta(timeframe)
+            
+            actual_diffs = df['timestamp'].diff()
+            unexpected_gaps = actual_diffs[actual_diffs > expected_diff * 1.5]
+            
+            if not unexpected_gaps.empty:
+                gap_info = {
+                    str(idx): f"{diff.total_seconds() / 60} minutes"
+                    for idx, diff in unexpected_gaps.items()
+                }
+                logger.warning(f"Found unexpected time gaps: {gap_info}")
+                
+            # التحقق من التواريخ المكررة
+            duplicates = df[df['timestamp'].duplicated()]
+            if not duplicates.empty:
+                return False, f"Found {len(duplicates)} duplicate timestamps"
+                
+            # التحقق من المستقبل
+            current_time = pd.Timestamp.now()
+            future_data = df[df['timestamp'] > current_time]
+            if not future_data.empty:
+                return False, f"Found {len(future_data)} timestamps in the future"
+                
+            return True, "Timestamp validation passed"
+            
+        except Exception as e:
+            return False, f"Error in timestamp validation: {str(e)}"
+
+    def validate_timeframe_consistency(self, df: pd.DataFrame, timeframe: str) -> Tuple[bool, str]:
+        """التحقق من اتساق الإطار الزمني"""
+        try:
+            if 'timestamp' not in df.columns:
+                return False, "Timestamp column not found"
+                
+            # تحويل الإطار الزمني إلى timedelta
+            timeframe_map = {
+                '1m': pd.Timedelta(minutes=1),
+                '5m': pd.Timedelta(minutes=5),
+                '15m': pd.Timedelta(minutes=15),
+                '30m': pd.Timedelta(minutes=30),
+                '1h': pd.Timedelta(hours=1),
+                '4h': pd.Timedelta(hours=4),
+                '1d': pd.Timedelta(days=1)
+            }
+            
+            if timeframe not in timeframe_map:
+                return False, f"Invalid timeframe: {timeframe}"
+                
+            expected_diff = timeframe_map[timeframe]
+            actual_diffs = df['timestamp'].diff()
+            
+            # السماح بهامش خطأ صغير (1%)
+            tolerance = expected_diff * 0.01
+            invalid_intervals = actual_diffs[
+                (actual_diffs > expected_diff + tolerance) |
+                (actual_diffs < expected_diff - tolerance)
+            ]
+            
+            if not invalid_intervals.empty:
+                return False, f"Found {len(invalid_intervals)} invalid time intervals"
+                
+            return True, "Timeframe consistency validation passed"
+            
+        except Exception as e:
+            return False, f"Error in timeframe validation: {str(e)}"

@@ -1,6 +1,5 @@
 .venv/
 .env
-.windsurfrules
 logs/
 cache/
 logs/data_processor.log
@@ -9,3 +8,8 @@ data/parquet/
 .coverage
 __pycache__/
 logs/data_processor.log
+.cursorrules
+FIXES_LOG.md
+gru_model.py
+metrics.py
+train.py
