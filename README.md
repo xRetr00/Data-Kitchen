@@ -49,10 +49,12 @@ The system follows a clear processing chain:
 
 ```mermaid
 graph LR
-    A[Exchange APIs] --> B[Data Processor]
-    B --> C[Data Storage]
-    C --> D[Data Handler]
-    D --> E[Validated Data]
+    A[Exchange APIs] --> C[Data Storage]
+    C --> D[Data Processor]
+    D --> E[Data Validator]
+    E --> C[Data Storage]
+    C --> F[Data Handler]
+    C --> G[Training Data]
 ```
 
 ## 💻 Usage
