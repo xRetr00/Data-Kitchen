@@ -59,6 +59,12 @@ MAX_CHUNK_SIZE = {
 MEMORY_THRESHOLD = 85  # Percentage of memory usage that triggers cleanup
 CHUNK_SIZE = 1000     # Size of chunks for processing
 
+# Storage settings
+COMPRESSION_TYPE = 'ZSTD'  # High compression ratio with good performance
+COMPRESSION_LEVEL = 3      # Balance between compression ratio and speed
+ROW_GROUP_SIZE = 100000   # Optimal size for Parquet row groups
+PAGE_SIZE = 8192          # Default page size for Parquet files
+
 # Trading pairs and time frames
 TRADING_PAIRS = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'ADA/USDT']  # Already in correct format
 TIMEFRAMES = ['1h', '4h', '1d']  # Only these specific timeframes

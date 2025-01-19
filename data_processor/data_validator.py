@@ -4,29 +4,49 @@ Data Validator Module
 
 import pandas as pd
 import numpy as np
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, List
 from .logger import setup_logger
+import logging
 
 logger = setup_logger(__name__)
+
+class DataValidationError(Exception):
+    """Custom exception for data validation errors"""
+    pass
 
 class DataValidator:
     """Class for validating and cleaning data"""
     
-    def __init__(self, missing_threshold: float = 0.35, min_data_points: int = 50):
+    def __init__(self, 
+                 missing_threshold: float = 0.15,  # Reduced from 0.35
+                 min_data_points: int = 50,
+                 variance_threshold: float = 1e-6,
+                 z_score_threshold: float = 3.0):
         """
-        Initialize DataValidator
+        Initialize DataValidator with improved thresholds
         
         Args:
-            missing_threshold: Maximum allowed ratio of missing data (default: 0.35)
-            min_data_points: Minimum number of data points required (default: 50)
+            missing_threshold: Maximum allowed ratio of missing data
+            min_data_points: Minimum number of data points required
+            variance_threshold: Minimum variance threshold
+            z_score_threshold: Z-score threshold for outlier detection
         """
         self.missing_threshold = missing_threshold
         self.min_data_points = min_data_points
-        logger.info(f"Data Validator initialized with missing_threshold={missing_threshold}, min_data_points={min_data_points}")
+        self.variance_threshold = variance_threshold
+        self.z_score_threshold = z_score_threshold
+        
+        logger.info(
+            f"Data Validator initialized with:"
+            f"\n- missing_threshold={missing_threshold}"
+            f"\n- min_data_points={min_data_points}"
+            f"\n- variance_threshold={variance_threshold}"
+            f"\n- z_score_threshold={z_score_threshold}"
+        )
     
-    def validate_data(self, df: pd.DataFrame) -> Tuple[bool, str]:
+    def validate_data_structure(self, df: pd.DataFrame) -> Tuple[bool, str]:
         """
-        Validate data quality
+        Validate data structure and required columns
         
         Args:
             df: DataFrame to validate
@@ -35,63 +55,178 @@ class DataValidator:
             Tuple[bool, str]: (is_valid, message)
         """
         try:
-            # Check for minimum sequence length
-            if len(df) < self.min_data_points:
-                return False, "Sequence too short"
-                
-            # Check for missing values
-            missing_ratio = df.isnull().sum() / len(df)
-            if missing_ratio.max() > self.missing_threshold:
-                return False, f"Too many missing values: {missing_ratio.max():.2%}"
-                
-            # Check for variance
-            for col in df.columns:
-                if col != 'timestamp':
-                    variance = df[col].var()
-                    if variance < 1e-10:
-                        return False, f"Low variance in {col}: {variance}"
-                        
-            # Check for data consistency
-            if not self._check_data_consistency(df):
-                return False, "Data consistency check failed"
-                
-            return True, "Data validation passed"
+            # Check if DataFrame is None or empty
+            if df is None or df.empty:
+                return False, "DataFrame is None or empty"
+            
+            # Required columns for price data
+            required_columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            missing_columns = [col for col in required_columns if col not in df.columns]
+            
+            if missing_columns:
+                return False, f"Missing required columns: {missing_columns}"
+            
+            # Check data types
+            expected_types = {
+                'timestamp': ['datetime64[ns]', 'datetime64'],
+                'open': ['float64', 'float32', 'int64', 'int32'],
+                'high': ['float64', 'float32', 'int64', 'int32'],
+                'low': ['float64', 'float32', 'int64', 'int32'],
+                'close': ['float64', 'float32', 'int64', 'int32'],
+                'volume': ['float64', 'float32', 'int64', 'int32']
+            }
+            
+            for col, expected_type in expected_types.items():
+                if str(df[col].dtype) not in expected_type:
+                    return False, f"Invalid data type for {col}: expected {expected_type}, got {df[col].dtype}"
+            
+            return True, "Data structure validation passed"
             
         except Exception as e:
-            return False, f"Validation error: {str(e)}"
-            
-    def _check_data_consistency(self, df: pd.DataFrame) -> bool:
+            return False, f"Error in structure validation: {str(e)}"
+    
+    def validate_sequence_data(self, sequences: np.ndarray, targets: np.ndarray) -> Tuple[bool, str]:
         """
-        Check data consistency
+        Validate sequence data for model training
         
         Args:
-            df: DataFrame to check
+            sequences: Input sequences array
+            targets: Target values array
             
         Returns:
-            bool: True if data is consistent
+            Tuple[bool, str]: (is_valid, message)
         """
         try:
-            # Price consistency checks with tolerance
-            tolerance = 1e-6
+            # Check if arrays are None
+            if sequences is None or targets is None:
+                return False, "Sequences or targets array is None"
             
-            price_issues = (
-                (df['high'] < df['low'] - tolerance) |
-                (df['close'] < df['low'] - tolerance) |
-                (df['close'] > df['high'] + tolerance) |
-                (df['open'] < df['low'] - tolerance) |
-                (df['open'] > df['high'] + tolerance)
-            )
+            # Check if arrays are empty
+            if sequences.size == 0 or targets.size == 0:
+                return False, "Empty sequences or targets array"
             
-            # Allow a small percentage of inconsistencies
-            max_inconsistencies = len(df) * 0.02  # 2% tolerance
-            if price_issues.sum() > max_inconsistencies:
-                return False
-                
-            return True
+            # Check dimensions
+            if len(sequences.shape) != 3:
+                return False, f"Invalid sequence shape: expected 3D array, got {len(sequences.shape)}D"
             
-        except Exception:
-            return False
+            if len(targets.shape) != 2:
+                return False, f"Invalid targets shape: expected 2D array, got {len(targets.shape)}D"
+            
+            # Check sequence length
+            if sequences.shape[1] < self.min_data_points:
+                return False, f"Sequence length too short: {sequences.shape[1]} < {self.min_data_points}"
+            
+            # Check matching dimensions
+            if sequences.shape[0] != targets.shape[0]:
+                return False, f"Mismatched dimensions: sequences={sequences.shape[0]}, targets={targets.shape[0]}"
+            
+            # Check for NaN and infinite values
+            if np.isnan(sequences).any() or np.isnan(targets).any():
+                return False, "Found NaN values in sequences or targets"
+            
+            if np.isinf(sequences).any() or np.isinf(targets).any():
+                return False, "Found infinite values in sequences or targets"
+            
+            return True, "Sequence validation passed"
+            
+        except Exception as e:
+            return False, f"Error in sequence validation: {str(e)}"
     
+    def validate_data_quality(self, df: pd.DataFrame) -> Tuple[bool, Dict[str, any]]:
+        """
+        Validate data quality with detailed statistics
+        
+        Args:
+            df: DataFrame to validate
+            
+        Returns:
+            Tuple[bool, Dict]: (is_valid, statistics)
+        """
+        try:
+            stats = {}
+            
+            # Missing data analysis
+            missing_stats = df.isnull().sum() / len(df)
+            stats['missing_data'] = missing_stats.to_dict()
+            
+            if missing_stats.max() > self.missing_threshold:
+                return False, {'error': 'Too many missing values', 'stats': stats}
+            
+            # Variance analysis
+            variance_stats = df.select_dtypes(include=[np.number]).var()
+            stats['variance'] = variance_stats.to_dict()
+            
+            if (variance_stats < self.variance_threshold).any():
+                return False, {'error': 'Low variance detected', 'stats': stats}
+            
+            # Outlier analysis
+            outliers = {}
+            for col in df.select_dtypes(include=[np.number]).columns:
+                z_scores = np.abs((df[col] - df[col].mean()) / df[col].std())
+                outliers[col] = (z_scores > self.z_score_threshold).sum()
+            
+            stats['outliers'] = outliers
+            
+            # Data consistency checks
+            consistency_valid, consistency_msg = self.validate_data_consistency(df)
+            stats['consistency'] = {'valid': consistency_valid, 'message': consistency_msg}
+            
+            if not consistency_valid:
+                return False, {'error': consistency_msg, 'stats': stats}
+            
+            return True, stats
+            
+        except Exception as e:
+            return False, {'error': f"Error in quality validation: {str(e)}"}
+    
+    def validate_data_consistency(self, df: pd.DataFrame) -> Tuple[bool, str]:
+        """
+        Validate data consistency with improved checks
+        
+        Args:
+            df: DataFrame to validate
+            
+        Returns:
+            Tuple[bool, str]: (is_valid, message)
+        """
+        try:
+            # Price relationship checks
+            price_issues = []
+            
+            # High >= Low
+            high_low_issues = df[df['high'] < df['low']].index.tolist()
+            if high_low_issues:
+                price_issues.append(f"High < Low at indices: {high_low_issues[:5]}...")
+            
+            # High >= Open, Close
+            high_issues = df[
+                (df['high'] < df['open']) | 
+                (df['high'] < df['close'])
+            ].index.tolist()
+            if high_issues:
+                price_issues.append(f"High not highest at indices: {high_issues[:5]}...")
+            
+            # Low <= Open, Close
+            low_issues = df[
+                (df['low'] > df['open']) | 
+                (df['low'] > df['close'])
+            ].index.tolist()
+            if low_issues:
+                price_issues.append(f"Low not lowest at indices: {low_issues[:5]}...")
+            
+            # Volume checks
+            volume_issues = df[df['volume'] <= 0].index.tolist()
+            if volume_issues:
+                price_issues.append(f"Invalid volume at indices: {volume_issues[:5]}...")
+            
+            if price_issues:
+                return False, "Data consistency issues found:\n" + "\n".join(price_issues)
+            
+            return True, "Data consistency validation passed"
+            
+        except Exception as e:
+            return False, f"Error in consistency validation: {str(e)}"
+
     def handle_missing_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Handle missing data in dataframe
@@ -157,69 +292,6 @@ class DataValidator:
         
         logger.info(f"Checked data quality. Rows remaining: {len(df)}")
         return df
-
-    def validate_data_quality(self, df: pd.DataFrame, config: dict) -> Tuple[bool, str]:
-        """التحقق من جودة البيانات"""
-        try:
-            # التحقق من البيانات المفقودة
-            missing_threshold = config.get('missing_data_threshold', 0.15)  # تخفيض النسبة من 35% إلى 15%
-            missing_percentages = df.isnull().mean()
-            
-            columns_over_threshold = missing_percentages[missing_percentages > missing_threshold]
-            if not columns_over_threshold.empty:
-                return False, f"Columns exceeding missing data threshold ({missing_threshold*100}%): {columns_over_threshold.to_dict()}"
-                
-            # التحقق من التباين
-            variance_threshold = config.get('variance_threshold', 1e-6)
-            variances = df.select_dtypes(include=[np.number]).var()
-            low_variance_cols = variances[variances < variance_threshold]
-            
-            if not low_variance_cols.empty:
-                return False, f"Columns with low variance (< {variance_threshold}): {low_variance_cols.to_dict()}"
-                
-            # التحقق من القيم المتطرفة
-            z_score_threshold = config.get('z_score_threshold', 3.0)
-            numeric_cols = df.select_dtypes(include=[np.number]).columns
-            
-            outliers_info = {}
-            for col in numeric_cols:
-                z_scores = np.abs((df[col] - df[col].mean()) / df[col].std())
-                outliers = (z_scores > z_score_threshold).sum()
-                if outliers > 0:
-                    outliers_info[col] = outliers
-                    
-            if outliers_info:
-                logger.warning(f"Found outliers: {outliers_info}")
-                
-            return True, "Data validation passed"
-            
-        except Exception as e:
-            return False, f"Error in data validation: {str(e)}"
-
-    def validate_data_consistency(self, df: pd.DataFrame) -> Tuple[bool, str]:
-        """التحقق من اتساق البيانات"""
-        try:
-            # التحقق من القيم السالبة في الأعمدة التي يجب أن تكون موجبة
-            positive_columns = ['volume', 'open', 'high', 'low', 'close']
-            for col in positive_columns:
-                if col in df.columns and (df[col] <= 0).any():
-                    return False, f"Found non-positive values in {col}"
-                    
-            # التحقق من العلاقات المنطقية
-            if all(col in df.columns for col in ['open', 'high', 'low', 'close']):
-                if not (df['high'] >= df['low']).all():
-                    return False, "High values must be greater than or equal to Low values"
-                    
-                if not ((df['high'] >= df['open']) & (df['high'] >= df['close'])).all():
-                    return False, "High values must be the highest"
-                    
-                if not ((df['low'] <= df['open']) & (df['low'] <= df['close'])).all():
-                    return False, "Low values must be the lowest"
-                    
-            return True, "Data consistency validation passed"
-            
-        except Exception as e:
-            return False, f"Error in consistency validation: {str(e)}"
 
     def validate_timestamps(self, df: pd.DataFrame, timeframe: str) -> Tuple[bool, str]:
         """التحقق من اتساق التواريخ"""

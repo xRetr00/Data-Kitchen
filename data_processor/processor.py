@@ -327,238 +327,190 @@ class DataProcessor:
     
     @log_memory_usage
     def process_pair(self, pair: str, timeframe: str) -> Optional[pd.DataFrame]:
-        """Process data for a single pair and timeframe"""
+        """Process a single pair with memory optimization"""
         try:
-            # First check if data exists in storage
+            # Check memory before starting
+            if check_memory_threshold():
+                gc.collect()
+                logger.warning("Memory threshold reached - garbage collection triggered")
+            
+            # Get raw data
+            data = self._get_raw_data(pair, timeframe)
+            if data is None or data.empty:
+                logger.error(f"No data available for {pair} {timeframe}")
+                return None
+            
+            # Validate data structure
+            is_valid, msg = self.validator.validate_data_structure(data)
+            if not is_valid:
+                logger.error(f"Data validation failed for {pair} {timeframe}: {msg}")
+                return None
+            
+            # Process in chunks to avoid memory issues
+            chunk_size = 10000  # Adjust based on available memory
+            num_chunks = len(data) // chunk_size + (1 if len(data) % chunk_size else 0)
+            
+            processed_chunks = []
+            for i in range(num_chunks):
+                start_idx = i * chunk_size
+                end_idx = min((i + 1) * chunk_size, len(data))
+                
+                # Process chunk
+                chunk = data.iloc[start_idx:end_idx].copy()
+                processed_chunk = self._process_chunk(chunk, pair, timeframe)
+                
+                if processed_chunk is not None:
+                    processed_chunks.append(processed_chunk)
+                    
+                # Clear memory after each chunk
+                del chunk
+                gc.collect()
+            
+            # Combine processed chunks
+            if not processed_chunks:
+                logger.error(f"No valid processed chunks for {pair} {timeframe}")
+                return None
+                
+            result = pd.concat(processed_chunks, axis=0)
+            
+            # Clear memory
+            del processed_chunks
+            gc.collect()
+            
+            # Final validation
+            is_valid, stats = self.validator.validate_data_quality(result)
+            if not is_valid:
+                logger.error(f"Final validation failed for {pair} {timeframe}: {stats}")
+                return None
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error processing {pair} {timeframe}: {str(e)}")
+            return None
+            
+    def _process_chunk(self, data: pd.DataFrame, pair: str, timeframe: str) -> Optional[pd.DataFrame]:
+        """Process a single chunk of data
+        
+        Args:
+            data: DataFrame to process
+            pair: Trading pair
+            timeframe: Time frame
+            
+        Returns:
+            Processed DataFrame or None if error
+        """
+        try:
+            if data is None or data.empty:
+                logger.error(f"No data to process for {pair} {timeframe}")
+                return None
+                
+            # Make copy to avoid modifying original
+            df = data.copy()
+            
+            # Convert timestamp to datetime if needed
+            if not pd.api.types.is_datetime64_any_dtype(df['timestamp']):
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            
+            # Set timestamp as index
+            df.set_index('timestamp', inplace=True)
+            
+            # Sort by time
+            df = df.sort_index()
+            
+            # Convert OHLCV columns to float32
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                df[col] = df[col].astype(np.float32)
+            
+            # Add technical indicators
+            df = calculate_technical_indicators(df, self.indicators_config)
+            
+            # Handle missing data
+            df = handle_missing_data(df)
+            
+            # Drop any remaining NaN values
+            df = df.dropna()
+            
+            # Optimize memory usage
+            df = optimize_dataframe(df)
+            
+            logger.info(f"Processed chunk for {pair} {timeframe}, shape: {df.shape}")
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error processing chunk for {pair} {timeframe}: {str(e)}")
+            return None
+            
+    def _get_raw_data(self, pair: str, timeframe: str) -> Optional[pd.DataFrame]:
+        """Get raw data with validation"""
+        try:
+            # Try to load from storage first
             data = self.data_storage.load_data(pair, timeframe)
+            if data is not None:
+                logger.info(f"Loaded cached data for {pair} {timeframe}")
+                return data
+            
+            # Fetch from exchange if not in storage
+            data = self._fetch_historical_data(pair, timeframe)
             if data is None:
-                logger.info(f"No cached data found for {pair} {timeframe}, fetching from exchange...")
-                # Fetch historical data first
+                return None
+            
+            # Validate timestamps
+            is_valid, msg = self.validator.validate_timestamps(data, timeframe)
+            if not is_valid:
+                logger.error(f"Timestamp validation failed for {pair} {timeframe}: {msg}")
+                return None
+            
+            # Save valid data
+            self.data_storage.save_data(data, pair, timeframe)
+            
+            return data
+            
+        except Exception as e:
+            logger.error(f"Error getting raw data for {pair} {timeframe}: {str(e)}")
+            return None
+            
+    def process_all_pairs(self, pairs: List[str] = None, timeframes: List[str] = None) -> None:
+        """Process all pairs with parallel execution and memory management"""
+        pairs = pairs or self.trading_pairs
+        timeframes = timeframes or self.timeframes
+        
+        try:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 with Progress(
                     SpinnerColumn(),
                     *Progress.get_default_columns(),
                     TimeElapsedColumn(),
                     console=self.console
                 ) as progress:
-                    task = progress.add_task(
-                        f"[cyan]Downloading {pair} {timeframe}...",
-                        total=100
-                    )
-                    data = self._fetch_historical_data(pair, timeframe)
-                    progress.update(task, completed=100)
-                
-                if data is None:
-                    logger.error(f"Failed to fetch data for {pair} {timeframe}")
-                    return None
-                
-                # Save raw data
-                self.data_storage.save_data(data, pair, timeframe)
-            
-            # Now process the data
-            with Progress(
-                SpinnerColumn(),
-                *Progress.get_default_columns(),
-                TimeElapsedColumn(),
-                console=self.console
-            ) as progress:
-                task = progress.add_task(
-                    f"[cyan]Processing {pair} {timeframe}...",
-                    total=100
-                )
-                
-                # Process in chunks to avoid memory issues
-                chunk_size = 1000
-                processed_chunks = []
-                
-                for i in range(0, len(data), chunk_size):
-                    if check_memory_threshold():
-                        logger.warning("Memory threshold exceeded, cleaning up...")
-                        gc.collect()
                     
-                    chunk = data.iloc[i:i + chunk_size].copy()
-                    processed_chunk = self._process_data(chunk)
-                    processed_chunks.append(processed_chunk)
+                    total_tasks = len(pairs) * len(timeframes)
+                    task = progress.add_task("[cyan]Processing pairs...", total=total_tasks)
                     
-                    progress.update(task, completed=(i + chunk_size) * 100 / len(data))
-                
-                # Combine processed chunks
-                processed_data = pd.concat(processed_chunks, axis=0)
-                processed_data = optimize_dataframe(processed_data)
-                
-                progress.update(task, completed=100)
-            
-            return processed_data
-            
-        except Exception as e:
-            logger.error(f"Error processing {pair} {timeframe}: {str(e)}")
-            return None
-            
-    def _get_raw_data(self, pair: str, timeframe: str) -> Optional[pd.DataFrame]:
-        """Get raw data from parquet file"""
-        try:
-            # Construct file path
-            file_path = Path(PARQUET_DIR) / f"{pair.replace('/', '_')}_{timeframe}.parquet"
-            
-            # Check if file exists
-            if not file_path.exists():
-                logger.error(f"Raw data file not found: {file_path}")
-                return None
-                
-            # Load data
-            data = pd.read_parquet(file_path)
-            logger.info(f"Loaded {len(data)} raw data points from {file_path}")
-            return data
-            
-        except Exception as e:
-            logger.error(f"Error loading raw data: {str(e)}")
-            return None
-            
-    def _process_data(self, data: pd.DataFrame) -> Optional[pd.DataFrame]:
-        """Process raw data"""
-        try:
-            if data is None or data.empty:
-                return None
-                
-            with Progress(
-                SpinnerColumn(),
-                *Progress.get_default_columns(),
-                TimeElapsedColumn(),
-                console=self.console
-            ) as progress:
-                # Make copy to avoid modifying original
-                df = data.copy()
-                total_steps = 5  # Total number of processing steps
-                task = progress.add_task("[cyan]Processing data...", total=total_steps)
-                
-                # Convert timestamp to datetime if it's not already
-                if not pd.api.types.is_datetime64_any_dtype(df['timestamp']):
-                    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-                progress.update(task, advance=1, description="[cyan]Converting timestamps...")
-                
-                # Set timestamp as index
-                df.set_index('timestamp', inplace=True)
-                
-                # Sort by time
-                df = df.sort_index()
-                progress.update(task, advance=1, description="[cyan]Sorting data...")
-                
-                # Convert OHLCV columns to float32
-                for col in ['open', 'high', 'low', 'close', 'volume']:
-                    df[col] = df[col].astype(np.float32)
-                progress.update(task, advance=1, description="[cyan]Converting data types...")
-                
-                # Add technical indicators
-                df = calculate_technical_indicators(df, self.indicators_config)
-                progress.update(task, advance=1, description="[cyan]Calculating indicators...")
-                
-                # Handle missing data
-                df = handle_missing_data(df)
-                
-                # Drop any remaining NaN values
-                df = df.dropna()
-                progress.update(task, advance=1, description="[cyan]Cleaning data...")
-                
-                logger.info(f"Processed data shape: {df.shape}")
-                return df
-                
-        except Exception as e:
-            logger.error(f"Error processing data: {str(e)}")
-            return None
-            
-    def _add_indicator(self, df: pd.DataFrame, indicator: str) -> None:
-        """Add a technical indicator to the data"""
-        # Implement indicator calculation here
-        pass
-    
-    def process_all_pairs(self, pairs: List[str] = None, timeframes: List[str] = None) -> None:
-        """Process all trading pairs and time frames"""
-        pairs = pairs or self.trading_pairs
-        timeframes = timeframes or self.timeframes
-        
-        # Create single progress display for all operations
-        with Progress(
-            SpinnerColumn(),
-            *Progress.get_default_columns(),
-            TimeElapsedColumn(),
-            console=self.console
-        ) as progress:
-            # Calculate total tasks
-            total_tasks = len(pairs) * len(timeframes)
-            main_task = progress.add_task(
-                "[cyan]Processing all pairs...",
-                total=total_tasks
-            )
-            
-            processed_count = 0
-            failed_pairs = []
-            
-            for pair in pairs:
-                for timeframe in timeframes:
-                    try:
-                        # Update task description
-                        progress.update(
-                            main_task,
-                            description=f"[cyan]Processing {pair} {timeframe}..."
-                        )
-                        
-                        # Try to load from storage first
-                        data = self.data_storage.load_data(pair, timeframe)
-                        
-                        if data is None:
-                            # If not in storage, fetch from exchange
-                            data = self._fetch_historical_data(pair, timeframe)
-                            
-                            if data is not None:
-                                # Save raw data immediately
-                                self.data_storage.save_data(data, pair, timeframe)
-                        
-                        if data is not None:
-                            # Process in chunks
-                            chunk_size = 1000
-                            processed_chunks = []
-                            
-                            for i in range(0, len(data), chunk_size):
-                                if check_memory_threshold():
-                                    logger.warning("Memory threshold exceeded, cleaning up...")
-                                    gc.collect()
-                                
-                                chunk = data.iloc[i:i + chunk_size].copy()
-                                processed_chunk = self._process_data(chunk)
-                                if processed_chunk is not None:
-                                    processed_chunks.append(processed_chunk)
-                            
-                            if processed_chunks:
-                                processed_data = pd.concat(processed_chunks, axis=0)
-                                processed_data = optimize_dataframe(processed_data)
-                                self.data_storage.save_processed_data(processed_data, pair, timeframe)
-                                processed_count += 1
+                    # Process pairs in parallel
+                    futures = []
+                    for pair in pairs:
+                        for timeframe in timeframes:
+                            future = executor.submit(self.process_pair, pair, timeframe)
+                            futures.append((future, pair, timeframe))
+                    
+                    # Monitor progress and handle results
+                    for future, pair, timeframe in futures:
+                        try:
+                            result = future.result(timeout=DOWNLOAD_TIMEOUT)
+                            if result is not None:
+                                logger.info(f"Successfully processed {pair} {timeframe}")
                             else:
-                                failed_pairs.append((pair, timeframe, "Processing failed"))
-                        else:
-                            failed_pairs.append((pair, timeframe, "Data fetch failed"))
+                                logger.error(f"Failed to process {pair} {timeframe}")
+                                
+                        except Exception as e:
+                            logger.error(f"Error processing {pair} {timeframe}: {str(e)}")
                             
-                    except Exception as e:
-                        logger.error(f"Error processing {pair} {timeframe}: {str(e)}")
-                        failed_pairs.append((pair, timeframe, str(e)))
-                    
-                    finally:
-                        # Update progress
-                        progress.update(main_task, advance=1)
-            
-            # Final progress update
-            progress.update(
-                main_task,
-                description=f"[green]Completed! Processed {processed_count}/{total_tasks} pairs"
-            )
-        
-        # Log summary
-        if processed_count == 0:
-            logger.error("No data was processed successfully!")
-            return False
-            
-        if failed_pairs:
-            logger.warning(f"Failed to process {len(failed_pairs)} pairs:")
-            for pair, timeframe, reason in failed_pairs:
-                logger.warning(f"- {pair} {timeframe}: {reason}")
-        
-        return processed_count > 0
+                        finally:
+                            progress.update(task, advance=1)
+                            
+                            # Clear memory after each pair
+                            gc.collect()
+                            
+        except Exception as e:
+            logger.error(f"Error in process_all_pairs: {str(e)}")

@@ -17,23 +17,38 @@ class IndicatorValidationError(Exception):
     pass
 
 def validate_input_data(data: np.ndarray, indicator: str) -> Tuple[bool, str]:
-    """Validate input data"""
-    if np.any(np.isnan(data)):
-        logger.warning(f"Input data for {indicator} contains NaN values")
-        return False, f"Input data for {indicator} contains NaN values"
-    if np.any(np.isinf(data)):
-        logger.warning(f"Input data for {indicator} contains infinite values")
-        return False, f"Input data for {indicator} contains infinite values"
+    """Validate input data with improved NaN handling"""
+    if data is None:
+        return False, f"No data provided for {indicator}"
+        
+    # Check for empty data
+    if len(data) == 0:
+        return False, f"Empty data provided for {indicator}"
+        
+    # Count NaN values
+    nan_count = np.isnan(data).sum()
+    if nan_count > 0:
+        nan_ratio = nan_count / len(data)
+        if nan_ratio > 0.5:  # If more than 50% are NaN
+            return False, f"Too many NaN values in {indicator} data ({nan_ratio:.2%})"
+        logger.warning(f"{indicator}: {nan_count} NaN values found ({nan_ratio:.2%})")
+        
+    # Check for infinite values
+    inf_count = np.isinf(data).sum()
+    if inf_count > 0:
+        return False, f"{inf_count} infinite values found in {indicator} data"
+        
+    # Check data length
     if len(data) < 2:
-        logger.warning(f"Not enough data points for {indicator}")
-        return False, f"Not enough data points for {indicator}"
+        return False, f"Not enough data points for {indicator} (minimum 2 required)"
+        
     return True, ""
 
 
 
 def calculate_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     """
-    Calculate RSI
+    Calculate RSI with improved NaN handling and validation
     
     Args:
         df (pd.DataFrame): DataFrame with price data
@@ -43,36 +58,49 @@ def calculate_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
         pd.DataFrame: DataFrame with calculated RSI values
     """
     try:
-        # Copy the data to avoid modifying the original
         df_copy = df.copy()
         
-        # Reorder the index to avoid repetition
-        df_copy = df_copy.reset_index(drop=True)
-        
-        # Calculate the price change
+        # Validate input data
+        if len(df_copy) < period + 1:
+            logger.warning(f"Not enough data points for RSI calculation. Need at least {period + 1}, got {len(df_copy)}")
+            return df
+            
+        # Handle NaN in close prices
+        close_prices = df_copy['close']
+        if close_prices.isnull().any():
+            logger.warning("Found NaN values in close prices")
+            # Fill small gaps with interpolation
+            close_prices = close_prices.interpolate(method='linear', limit=5)
+            # Fill remaining gaps with forward fill
+            close_prices = close_prices.fillna(method='ffill')
+            df_copy['close'] = close_prices
+            
+        # Calculate price changes
         delta = df_copy['close'].diff()
         
-        # Separate the gains and losses
+        # Separate gains and losses
         gain = delta.where(delta > 0, 0)
         loss = -delta.where(delta < 0, 0)
         
-        # Calculate the exponential moving average
-        avg_gain = gain.ewm(com=period-1, adjust=True).mean()  # Change adjust to True
-        avg_loss = loss.ewm(com=period-1, adjust=True).mean()
+        # Calculate average gain and loss
+        avg_gain = gain.rolling(window=period, min_periods=1).mean()
+        avg_loss = loss.rolling(window=period, min_periods=1).mean()
         
-        # Avoid division by zero
-        avg_loss = avg_loss.replace(0, np.nan)
-        
-        # Calculate RSI
+        # Calculate RS and RSI
         rs = avg_gain / avg_loss
         rsi = 100 - (100 / (1 + rs))
-
-        # Fill the missing values at the beginning
-        rsi[:period] = np.nan
-
-        # Add RSI to the original data
-        df[f'RSI_{period}'] = rsi
         
+        # Handle edge cases
+        rsi = rsi.fillna(50)  # Fill initial NaN with neutral RSI
+        rsi = rsi.clip(0, 100)  # Ensure RSI stays within bounds
+        
+        # Validate final RSI values
+        if rsi.isnull().any():
+            nan_count = rsi.isnull().sum()
+            logger.warning(f"RSI still contains {nan_count} NaN values after calculation")
+            rsi = rsi.fillna(method='ffill').fillna(50)
+            
+        df[f'RSI_{period}'] = rsi
         return df
         
     except Exception as e:
@@ -80,21 +108,52 @@ def calculate_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
         return df
 
 def calculate_macd(df: pd.DataFrame, fast_period: int = 12, slow_period: int = 26, signal_period: int = 9) -> pd.DataFrame:
-    """Calculate MACD"""
+    """
+    Calculate MACD with improved NaN handling
+    
+    Args:
+        df (pd.DataFrame): DataFrame with price data
+        fast_period (int): Fast EMA period
+        slow_period (int): Slow EMA period
+        signal_period (int): Signal line period
+        
+    Returns:
+        pd.DataFrame: DataFrame with calculated MACD values
+    """
     try:
-        exp1 = df['close'].ewm(span=fast_period, adjust=False).mean()
-        exp2 = df['close'].ewm(span=slow_period, adjust=False).mean()
+        # Handle NaN in close prices
+        close_prices = df['close']
+        if close_prices.isnull().any():
+            logger.warning("Found NaN values in close prices for MACD calculation")
+            close_prices = close_prices.interpolate(method='linear', limit=5)
+            close_prices = close_prices.fillna(method='ffill')
+            
+        # Calculate EMAs
+        exp1 = close_prices.ewm(span=fast_period, adjust=False).mean()
+        exp2 = close_prices.ewm(span=slow_period, adjust=False).mean()
+        
+        # Calculate MACD line and signal line
         macd = exp1 - exp2
         signal = macd.ewm(span=signal_period, adjust=False).mean()
         
-        df[f'MACD_{fast_period}_{slow_period}_{signal_period}'] = macd
-        df[f'MACD_Signal_{fast_period}_{slow_period}_{signal_period}'] = signal
-        
-        # Validate MACD values
+        # Handle any remaining NaN values
         if macd.isna().any():
-            logger.warning("MACD validation warning: MACD values contain NaN")
+            logger.warning("MACD contains NaN values, applying forward fill")
+            macd = macd.fillna(method='ffill')
+            
+        if signal.isna().any():
+            logger.warning("MACD signal contains NaN values, applying forward fill")
+            signal = signal.fillna(method='ffill')
+            
+        # Add to DataFrame with consistent naming
+        macd_col = f'MACD_{fast_period}_{slow_period}_{signal_period}'
+        signal_col = f'MACD_Signal_{fast_period}_{slow_period}_{signal_period}'
+        
+        df[macd_col] = macd
+        df[signal_col] = signal
         
         return df
+        
     except Exception as e:
         logger.error(f"Error calculating MACD: {str(e)}")
         return df
@@ -216,59 +275,61 @@ def calculate_technical_indicators(df: pd.DataFrame, indicators_config: dict) ->
         logger.error(f"Error in calculate_technical_indicators: {str(e)}")
         return df
 
-def handle_missing_data(df: pd.DataFrame) -> pd.DataFrame:
+def handle_missing_data(df: pd.DataFrame, max_gap: int = 5) -> pd.DataFrame:
     """
-    Handle missing data in DataFrame
+    Handle missing data in DataFrame with improved gap handling
     
     Args:
         df: DataFrame with possibly missing values
+        max_gap: Maximum number of consecutive NaN values to fill
         
     Returns:
         DataFrame with handled missing values
     """
     try:
-        # Make a copy to avoid modifying original
         logger.info("Starting missing data handling")
         result_df = df.copy()
         
-        with Progress(
-            SpinnerColumn(),
-            *Progress.get_default_columns(),
-            TimeElapsedColumn(),
-            console=Console()
-        ) as progress:
-            total_steps = 4
-            task = progress.add_task("[cyan]Handling missing data...", total=total_steps)
+        # Get initial NaN statistics
+        initial_nans = result_df.isna().sum()
+        logger.info(f"Initial NaN count per column: {initial_nans}")
+        
+        # Handle different columns differently
+        for column in result_df.columns:
+            nan_mask = result_df[column].isna()
+            nan_count = nan_mask.sum()
             
-            # Forward fill missing values
-            result_df = result_df.ffill()
-            logger.debug("Completed forward fill")
-            progress.update(task, advance=1, description="[cyan]Forward filling...")
+            if nan_count == 0:
+                continue
+                
+            # Get consecutive NaN sequences
+            nan_groups = result_df[column].isna().astype(int).groupby(result_df.index).sum()
+            max_consecutive_nans = nan_groups.max()
             
-            # If still have missing values at the start, backward fill
-            result_df = result_df.bfill()
-            logger.debug("Completed backward fill")
-            progress.update(task, advance=1, description="[cyan]Backward filling...")
+            logger.info(f"Column {column}: {nan_count} NaNs, max consecutive: {max_consecutive_nans}")
             
-            # Drop rows where all indicator columns are NaN
-            indicator_cols = [col for col in result_df.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
-            if indicator_cols:
-                result_df = result_df.dropna(subset=indicator_cols, how='all')
-                logger.debug("Completed dropping empty rows")
-                progress.update(task, advance=1, description="[cyan]Dropping empty rows...")
+            if max_consecutive_nans <= max_gap:
+                # Small gaps: Use linear interpolation
+                result_df[column] = result_df[column].interpolate(method='linear', limit=max_gap)
             else:
-                logger.info("Successfully handled all missing values")
-            
-            # Log missing data info
-            missing_count = result_df.isnull().sum()
-            if missing_count.any():
-                logger.warning(f"Missing values after handling:\n{missing_count[missing_count > 0]}")
-            progress.update(task, advance=1, description="[cyan]Checking remaining missing values...")
-            
-            return result_df
-            
+                # Larger gaps: Use forward fill then backward fill
+                result_df[column] = result_df[column].fillna(method='ffill', limit=max_gap)
+                result_df[column] = result_df[column].fillna(method='bfill', limit=max_gap)
+        
+        # Check remaining NaNs
+        final_nans = result_df.isna().sum()
+        logger.info(f"Final NaN count per column: {final_nans}")
+        
+        # Drop rows where all indicator columns are NaN
+        indicator_columns = [col for col in result_df.columns if any(ind in col for ind in ['RSI', 'MACD', 'SMA', 'EMA'])]
+        if indicator_columns:
+            result_df = result_df.dropna(subset=indicator_columns, how='all')
+            logger.info(f"Dropped {len(df) - len(result_df)} rows where all indicators were NaN")
+        
+        return result_df
+        
     except Exception as e:
-        logger.error(f"Error handling missing data: {str(e)}")
+        logger.error(f"Error in handle_missing_data: {str(e)}")
         return df
 
 

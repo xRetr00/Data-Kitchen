@@ -7,7 +7,7 @@ It ensures data quality, handles different timeframes, and provides consistent d
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple, Optional, Generator
+from typing import Dict, List, Tuple, Optional, Generator, Union
 from datetime import datetime, timedelta
 import logging
 from .logger import setup_logger
@@ -18,6 +18,7 @@ from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn, Console
 from .memory_utils import log_memory_usage, optimize_dataframe, check_memory_threshold , get_memory_usage
 import gc
 import os
+import tensorflow as tf
 
 logger = setup_logger(__name__)
 
@@ -120,7 +121,7 @@ class DataHandler:
                         logger.warning("Memory threshold exceeded, cleaning up...")
                         gc.collect()
                     
-                    processed_data = self.data_processor._process_data(data)
+                    processed_data = self.data_processor._process_chunk(data, pair, timeframe)
                     if processed_data is not None and not processed_data.empty:
                         raw_data[(pair, timeframe)] = processed_data
                         logger.info(f"Processed {len(processed_data)} points for {pair} {timeframe}")
@@ -143,7 +144,7 @@ class DataHandler:
             train_data, val_data, test_data = self._prepare_datasets(raw_data)
             
             logger.info("=== Data Statistics ===")
-            if 'sequences' in train_data:
+            if train_data is not None:
                 logger.info(f"Training sequences: {len(train_data['sequences'])}")
                 logger.info(f"Validation sequences: {len(val_data['sequences'])}")
                 logger.info(f"Test sequences: {len(test_data['sequences'])}")
@@ -165,59 +166,200 @@ class DataHandler:
                 raise ValueError("Data validation failed. Cannot proceed with training.")
                 
             logger.info("=== Data preparation completed successfully ===")
-            return train_dataset, val_dataset, test_dataset
+            return train_data, val_data, test_data
         
+    @log_memory_usage
     def _collect_raw_data(self, pairs: List[str], timeframes: List[str]) -> Dict[Tuple[str, str], pd.DataFrame]:
-        """Collect and process raw data for all pairs and timeframes"""
+        """Collect and process raw data for all pairs and timeframes with memory optimization"""
         raw_data = {}
         
-        for pair in pairs:
-            for timeframe in timeframes:
-                logger.info(f"Processing {pair} {timeframe}...")
-                
-                # First, try to load cached data
-                data = self.data_storage.load_data(pair, timeframe)
-                
-                if data is not None:
-                    logger.info(f"Loaded cached data for {pair} {timeframe}")
-                    raw_data[(pair, timeframe)] = data
-                    continue
-                
-                # If data not cached, process it
-                try:
-                    data = self.data_processor.process_pair(pair, timeframe)
-                    if data is not None:
-                        # Save processed data
-                        self.data_storage.save_data(data, pair, timeframe)
-                        raw_data[(pair, timeframe)] = data
-                        logger.info(f"Processed and saved data for {pair} {timeframe}")
-                    else:
-                        logger.warning(f"No data available for {pair} {timeframe}")
-                except Exception as e:
-                    logger.error(f"Error processing data for {pair} {timeframe}: {str(e)}")
+        try:
+            for pair in pairs:
+                for timeframe in timeframes:
+                    logger.info(f"Processing {pair} {timeframe}...")
+                    initial_memory = get_memory_usage()
                     
+                    # Clear memory if threshold exceeded
+                    if check_memory_threshold():
+                        gc.collect()
+                        logger.warning("Memory threshold reached - garbage collection triggered")
+                    
+                    # First, try to load cached data
+                    try:
+                        data = self.data_storage.load_data(pair, timeframe)
+                        
+                        if data is not None:
+                            # Optimize dataframe memory usage
+                            data = optimize_dataframe(data)
+                            logger.info(f"Loaded and optimized cached data for {pair} {timeframe}")
+                            raw_data[(pair, timeframe)] = data
+                            continue
+                            
+                    except Exception as e:
+                        logger.error(f"Error loading cached data for {pair} {timeframe}: {str(e)}")
+                        continue
+                    
+                    # If data not cached, process it
+                    try:
+                        data = self.data_processor.process_pair(pair, timeframe)
+                        if data is not None:
+                            # Optimize before saving
+                            data = optimize_dataframe(data)
+                            
+                            # Save processed data
+                            self.data_storage.save_data(data, pair, timeframe)
+                            raw_data[(pair, timeframe)] = data
+                            logger.info(f"Processed and saved data for {pair} {timeframe}")
+                        else:
+                            logger.warning(f"No data available for {pair} {timeframe}")
+                            
+                    except Exception as e:
+                        logger.error(f"Error processing data for {pair} {timeframe}: {str(e)}")
+                        continue
+                    
+                    # Log memory usage after processing each pair/timeframe
+                    final_memory = get_memory_usage()
+                    memory_diff = final_memory - initial_memory
+                    logger.info(f"Memory change for {pair} {timeframe}: {memory_diff:.2f} MB")
+                    
+                    # Clear pair data if no longer needed
+                    if pair in raw_data and all(tf in raw_data[pair] for tf in timeframes):
+                        del data
+                        gc.collect()
+            
+            return raw_data
+            
+        except Exception as e:
+            logger.error(f"Error in data collection: {str(e)}")
+            return raw_data
+            
+    def _optimize_raw_data(self, raw_data: Dict[Tuple[str, str], pd.DataFrame]) -> Dict[Tuple[str, str], pd.DataFrame]:
+        """Optimize memory usage of raw data dictionary"""
+        try:
+            optimized_data = {}
+            for (pair, timeframe), data in raw_data.items():
+                # Optimize each dataframe
+                optimized_df = optimize_dataframe(data)
+                optimized_data[(pair, timeframe)] = optimized_df
+                
+                # Clear original data
+                del data
+                
+            # Force garbage collection
+            gc.collect()
+            return optimized_data
+            
+        except Exception as e:
+            logger.error(f"Error optimizing raw data: {str(e)}")
         return raw_data
         
-    def _prepare_datasets(self, raw_data: Dict[Tuple[str, str], pd.DataFrame]) -> Tuple[Dict, Dict, Dict]:
-        """Prepare train/val/test datasets from raw data"""
-        train_data = {'sequences': [], 'targets': [], 'weights': [], 'pair_idx': [], 'timeframe_idx': []}
-        val_data = {'sequences': [], 'targets': [], 'weights': [], 'pair_idx': [], 'timeframe_idx': []}
-        test_data = {'sequences': [], 'targets': [], 'weights': [], 'pair_idx': [], 'timeframe_idx': []}
+    def sequence_generator(self, data: pd.DataFrame, sequence_length: int, batch_size: int = 32):
+        """Generator function for creating sequences efficiently"""
+        features = data.values
+        num_sequences = len(features) - sequence_length
         
-        for (pair, timeframe), data in raw_data.items():
-            # Split data
-            train, val, test = self._split_data(data)
+        def gen_sequences():
+            for i in range(0, num_sequences, batch_size):
+                end_idx = min(i + batch_size, num_sequences)
+                batch_sequences = []
+                batch_targets = []
+                
+                for j in range(i, end_idx):
+                    seq = features[j:j + sequence_length]
+                    target = features[j + sequence_length, 3]  # Close price as target
+                    batch_sequences.append(seq)
+                    batch_targets.append(target)
+                    
+                yield np.array(batch_sequences, dtype=np.float32), np.array(batch_targets, dtype=np.float32)
+
+        return gen_sequences
+
+    def create_tf_dataset(self, data: pd.DataFrame, sequence_length: int, batch_size: int = 32) -> Optional[Dict]:
+        """Create a dictionary containing sequences and targets"""
+        try:
+            if data is None or len(data) < sequence_length:
+                logger.warning(f"Insufficient data points ({len(data) if data is not None else 0}) for sequence length {sequence_length}")
+                return None
             
-            # Get indices
-            pair_id = TRADING_PAIRS.index(pair)
-            timeframe_id = TIMEFRAMES.index(timeframe)
+            # Convert to numpy array for faster processing
+            features = data.values.astype(np.float32)
             
-            # Add to respective datasets
-            self._add_to_dataset(train_data, train, pair_id, timeframe_id)
-            self._add_to_dataset(val_data, val, pair_id, timeframe_id)
-            self._add_to_dataset(test_data, test, pair_id, timeframe_id)
+            # Create sequences and targets
+            sequences = []
+            targets = []
             
-        return train_data, val_data, test_data
+            for i in range(len(features) - sequence_length):
+                seq = features[i:(i + sequence_length)]
+                target = features[i + sequence_length, 3]  # Close price as target
+                sequences.append(seq)
+                targets.append(target)
+            
+            if not sequences:
+                logger.warning("No sequences created")
+                return None
+            
+            # Convert to numpy arrays and create dictionary
+            return {
+                'sequences': np.array(sequences, dtype=np.float32),
+                'targets': np.array(targets, dtype=np.float32)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error creating dataset: {str(e)}")
+            return None
+
+    def _prepare_datasets(self, raw_data: Dict[Tuple[str, str], pd.DataFrame]) -> Tuple[Dict, Dict, Dict]:
+        """Prepare train/val/test datasets as dictionaries"""
+        try:
+            train_sequences = []
+            train_targets = []
+            val_sequences = []
+            val_targets = []
+            test_sequences = []
+            test_targets = []
+            
+            for (pair, timeframe), data in raw_data.items():
+                # Split data
+                train, val, test = self._split_data(data)
+                
+                # Create datasets for each split
+                train_ds = self.create_tf_dataset(train, self.min_sequence_length)
+                val_ds = self.create_tf_dataset(val, self.min_sequence_length)
+                test_ds = self.create_tf_dataset(test, self.min_sequence_length)
+                
+                if train_ds and val_ds and test_ds:
+                    train_sequences.append(train_ds['sequences'])
+                    train_targets.append(train_ds['targets'])
+                    val_sequences.append(val_ds['sequences'])
+                    val_targets.append(val_ds['targets'])
+                    test_sequences.append(test_ds['sequences'])
+                    test_targets.append(test_ds['targets'])
+            
+            if not train_sequences:
+                logger.error("No valid datasets created")
+                return None, None, None
+            
+            # Combine all sequences and targets
+            train_data = {
+                'sequences': np.concatenate(train_sequences, axis=0),
+                'targets': np.concatenate(train_targets, axis=0)
+            }
+            
+            val_data = {
+                'sequences': np.concatenate(val_sequences, axis=0),
+                'targets': np.concatenate(val_targets, axis=0)
+            }
+            
+            test_data = {
+                'sequences': np.concatenate(test_sequences, axis=0),
+                'targets': np.concatenate(test_targets, axis=0)
+            }
+            
+            return train_data, val_data, test_data
+            
+        except Exception as e:
+            logger.error(f"Error preparing datasets: {str(e)}")
+            return None, None, None
         
     def _split_data(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """Split data into train/val/test sets"""
@@ -372,57 +514,44 @@ class DataHandler:
             logger.error(f"Error preparing sequences: {str(e)}")
             return None
 
-    def _validate_data_structure(self, data: pd.DataFrame) -> Tuple[bool, str]:
+    def _validate_data_structure(self, data_dict: Dict) -> Tuple[bool, str]:
         """
-        Validate the structure of input data dictionary
+        التحقق من صحة هيكل البيانات المدخلة.
         
         Args:
-            data_dict: Dictionary containing data arrays
+            data_dict: قاموس يحتوي على البيانات المراد التحقق منها
             
         Returns:
-            Dict with validation results
+            Tuple[bool, str]: زوج يحتوي على نتيجة التحقق (صح/خطأ) ورسالة توضيحية
         """
-        validation_results = {'valid': False, 'error': None}
         try:
-
-            # Check if dictionary exists and has required keys
-            required_keys = {'sequences', 'targets', 'pair_idx', 'timeframe_idx', 'weights'}
             if not isinstance(data_dict, dict):
-                validation_results['error'] = "Input must be a dictionary"
-                return validation_results
+                return False, "Input must be a dictionary"
 
+            # التحقق من وجود المفاتيح المطلوبة
+            required_keys = {'sequences', 'targets'}
+            optional_keys = {'pair_idx', 'timeframe_idx', 'weights'}
+            
+            # التحقق من المفاتيح المطلوبة
             if not all(key in data_dict for key in required_keys):
-                validation_results['error'] = f"Missing required keys. Expected: {required_keys}"
-                return validation_results
+                missing_keys = required_keys - set(data_dict.keys())
+                return False, f"Missing required keys: {missing_keys}"
 
-            # Check for required columns
-            required_columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
-            missing_columns = [col for col in required_columns if col not in data.columns]
+            # التحقق من أن البيانات ليست فارغة
+            if any(len(data_dict[key]) == 0 for key in required_keys):
+                empty_keys = [key for key in required_keys if len(data_dict[key]) == 0]
+                return False, f"Empty data arrays found for: {empty_keys}"
+
+            # التحقق من تناسق أحجام المصفوفات للمفاتيح المطلوبة
+            first_length = len(data_dict['sequences'])
+            if not all(len(data_dict[key]) == first_length for key in required_keys):
+                inconsistent_keys = [key for key in required_keys if len(data_dict[key]) != first_length]
+                return False, f"Inconsistent array lengths for: {inconsistent_keys}"
             
-            if missing_columns:
-                return False, f"Missing required columns: {missing_columns}"
-                
-            # التحقق من عدم وجود قيم مكررة في timestamp
-            if data['timestamp'].duplicated().any():
-                # إزالة القيم المكررة
-                data.drop_duplicates(subset=['timestamp'], keep='first', inplace=True)
-                logger.warning("Removed duplicate timestamps")
-            
-            # التحقق من ترتيب البيانات
-            if not data['timestamp'].is_monotonic_increasing:
-                data.sort_values('timestamp', inplace=True)
-                logger.warning("Sorted data by timestamp")
-            
-            # التحقق من نوع البيانات
-            for col in ['open', 'high', 'low', 'close', 'volume']:
-                if not pd.api.types.is_numeric_dtype(data[col]):
-                    return False, f"Column {col} is not numeric"
-                    
-            # التحقق من عدم وجود قيم سالبة
-            for col in ['open', 'high', 'low', 'close', 'volume']:
-                if (data[col] <= 0).any():
-                    data = data[data[col] > 0]
-                    logger.warning(f"Removed rows with non-positive values in {col}")
+            # التحقق من المفاتيح الاختيارية إذا وجدت
+            for key in optional_keys:
+                if key in data_dict and len(data_dict[key]) != first_length:
+                    return False, f"Optional key {key} has inconsistent length"
             
             return True, "Data structure is valid"
             
@@ -430,48 +559,55 @@ class DataHandler:
             return False, f"Error validating data structure: {str(e)}"
 
 
-    def validate_and_prepare_data(self, data_dict: Dict[str, List[np.ndarray]], sequence_length: Optional[int] = None) -> Tuple[Optional[Dict], Dict]:
+    def validate_and_prepare_data(self, data: Union[Dict, tf.data.Dataset], sequence_length: Optional[int] = None) -> Tuple[Optional[Union[Dict, tf.data.Dataset]], Dict]:
         """
         Validate and prepare data for training
         
         Args:
-            data_dict: Dictionary containing data arrays
+            data: Dictionary or tf.data.Dataset containing data
             sequence_length: Sequence length (optional)
             
         Returns:
-            Tuple of (prepared data dict, validation results dict)
+            Tuple of (prepared data, validation results dict)
         """
         validation_results = {'valid': False, 'error': None}
         try:
-            # Validate data structure
-            validation_results = self._validate_data_structure(data_dict)
-            if not validation_results['valid']:
-                logger.error("Data structure validation failed")
-                return None, validation_results
+            # التحقق من نوع البيانات
+            if isinstance(data, tf.data.Dataset):
+                # التحقق من صحة Dataset
+                try:
+                    # فحص عينة من البيانات
+                    sample = next(iter(data))
+                    if not isinstance(sample, tuple) or len(sample) != 2:
+                        return None, {'valid': False, 'error': 'Dataset must yield (features, targets) tuples'}
+                    
+                    validation_results = {'valid': True, 'error': None}
+                    return data, validation_results
+                    
+                except Exception as e:
+                    return None, {'valid': False, 'error': f'Invalid dataset structure: {str(e)}'}
             
-            # Check for missing values
-            if 'sequences' in data_dict:
-                sequences_df = pd.DataFrame(data_dict['sequences'])
-                is_valid, error_msg = self.check_nan_values(sequences_df)
+            # إذا كانت البيانات قاموساً
+            elif isinstance(data, dict):
+                # التحقق من صحة هيكل البيانات
+                is_valid, message = self._validate_data_structure(data)
+                validation_results['valid'] = is_valid
+                validation_results['error'] = None if is_valid else message
+
                 if not is_valid:
-                    logger.error(f"Missing values check failed: {error_msg}")
-                    validation_results['error'] = error_msg
+                    logger.error(f"Data validation failed: {message}")
                     return None, validation_results
+                
+                # باقي عمليات التحقق والإعداد
+                if sequence_length:
+                    prepared_data = self.prepare_sequences(data, sequence_length)
+                else:
+                    prepared_data = data
+
+                return prepared_data, validation_results
             
-            # Prepare sequences
-            prepared_data = self.prepare_sequences(data_dict, sequence_length or self.min_sequence_length)
-            if prepared_data is None:
-                logger.error("Failed to prepare sequences")
-                return None, validation_results
-            
-            # Validate prepared data
-            if not self._validate_prepared_data(prepared_data):
-                logger.error("Prepared data validation failed")
-                validation_results['error'] = "Prepared data validation failed"
-                return None, validation_results
-            
-            validation_results['valid'] = True
-            return prepared_data, validation_results
+            else:
+                return None, {'valid': False, 'error': f'Unsupported data type: {type(data)}'}
             
         except Exception as e:
             logger.error(f"Error in validate_and_prepare_data: {str(e)}")
@@ -771,3 +907,32 @@ class DataHandler:
             
         except Exception as e:
             return False, f"Error checking missing values: {str(e)}"
+
+    def _process_raw_data(self, raw_data: Dict[Tuple[str, str], pd.DataFrame]) -> Dict[Tuple[str, str], pd.DataFrame]:
+        """Process raw data for all pairs and timeframes"""
+        processed_data = {}
+        
+        try:
+            for (pair, timeframe), data in raw_data.items():
+                try:
+                    # Process data using processor
+                    processed = self.processor._process_chunk(data, pair, timeframe)
+                    
+                    if processed is not None:
+                        processed_data[(pair, timeframe)] = processed
+                        logger.info(f"Successfully processed {pair} {timeframe}")
+                    else:
+                        logger.error(f"Error processing {pair} {timeframe}")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing {pair} {timeframe}: {str(e)}")
+                    
+            if not processed_data:
+                logger.error("No data was processed!")
+                return None
+                
+            return processed_data
+            
+        except Exception as e:
+            logger.error(f"Error in _process_raw_data: {str(e)}")
+            return None
