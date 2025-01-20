@@ -11,13 +11,17 @@ from rich.console import Console
 from rich.logging import RichHandler
 from .config import LOG_DIR
 
-def setup_logger(name: str) -> logging.Logger:
+def setup_logger(name: str, log_file: str = None) -> logging.Logger:
     """
     Setup colored logger with rich progress bar support
     """
     # Create logs directory if it doesn't exist
     log_dir = Path(LOG_DIR)
     log_dir.mkdir(exist_ok=True)
+    
+    # Use provided log file name or default
+    log_file = log_file or 'data_processor.log'
+    log_path = log_dir / log_file
     
     # Create console for rich output
     console = Console(file=sys.stderr)
@@ -28,10 +32,10 @@ def setup_logger(name: str) -> logging.Logger:
     # Configure root logger
     logging.basicConfig(
         level=logging.INFO,
-        format='[%(filename)s:%(lineno)d] %(message)s',
+        format='[%(asctime)s][%(filename)s:%(lineno)d] %(message)s',
         datefmt='%m/%d/%y %H:%M:%S',
         handlers=[
-            logging.FileHandler(log_dir / 'data_processor.log'),
+            logging.FileHandler(log_path),
             RichHandler(
                 console=console,
                 rich_tracebacks=True,

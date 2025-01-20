@@ -14,3 +14,4 @@ gru_model.py
 metrics.py
 train.py
 sync_vm_logs.py
+model_report.md
