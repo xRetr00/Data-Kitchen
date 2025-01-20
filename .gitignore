@@ -16,3 +16,4 @@ train.py
 sync_vm_logs.py
 model_report.md
 LICENSE
+trained_models/
