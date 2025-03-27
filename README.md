@@ -120,7 +120,7 @@ Built-in validation checks:
 ## 🛠️ Installation
 
 ```bash
-git clone https://github.com/yourusername/data-kitchen.git
+git clone https://github.com/xRetr00/data-kitchen.git
 cd data-kitchen
 pip install -r requirements.txt
 ```
